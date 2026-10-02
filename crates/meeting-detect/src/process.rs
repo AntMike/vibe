@@ -2,6 +2,7 @@ use crate::{ProcessInfo, ProcessKind};
 
 const ZOOM_BUNDLE_IDS: &[&str] = &["us.zoom.xos"];
 const TEAMS_BUNDLE_IDS: &[&str] = &["com.microsoft.teams2", "com.microsoft.teams"];
+const SLACK_BUNDLE_IDS: &[&str] = &["com.tinyspeck.slackmacgap"];
 const BROWSER_BUNDLE_IDS: &[&str] = &[
     "com.google.chrome",
     "com.google.chrome.beta",
@@ -31,6 +32,7 @@ const TEAMS_PROCESS_NAMES: &[&str] = &[
     "microsoft teams",
     "microsoft teams classic",
 ];
+const SLACK_PROCESS_NAMES: &[&str] = &["slack", "slack.exe"];
 const BROWSER_PROCESS_NAMES: &[&str] = &[
     "chrome",
     "chrome.exe",
@@ -70,6 +72,13 @@ pub(crate) fn source(process: &ProcessInfo) -> Option<ProcessKind> {
     {
         return Some(ProcessKind::Teams);
     }
+    // The Microsoft Store build reports its package family, `com.tinyspeck.slackdesktop_8yrtsj140pw4g`.
+    if bundle_id
+        .as_deref()
+        .is_some_and(|id| SLACK_BUNDLE_IDS.contains(&id) || id.starts_with("com.tinyspeck.slackdesktop_"))
+    {
+        return Some(ProcessKind::Slack);
+    }
     if bundle_id.as_deref().is_some_and(|id| BROWSER_BUNDLE_IDS.contains(&id)) {
         return Some(ProcessKind::Browser);
     }
@@ -81,6 +90,9 @@ pub(crate) fn source(process: &ProcessInfo) -> Option<ProcessKind> {
     }
     if exact_identity(&name, executable.as_deref(), TEAMS_PROCESS_NAMES) {
         return Some(ProcessKind::Teams);
+    }
+    if exact_identity(&name, executable.as_deref(), SLACK_PROCESS_NAMES) {
+        return Some(ProcessKind::Slack);
     }
     if exact_identity(&name, executable.as_deref(), BROWSER_PROCESS_NAMES) {
         return Some(ProcessKind::Browser);
@@ -240,6 +252,29 @@ mod tests {
                 Some(ProcessKind::Teams)
             );
         }
+    }
+
+    #[test]
+    fn classifies_slack_desktop_store_and_mac_builds() {
+        for (name, executable) in [
+            ("slack.exe", None),
+            ("Slack", None),
+            ("ignored", Some(r"C:\Users\me\AppData\Local\slack\app-4.48.102\slack.exe")),
+            (
+                "ignored",
+                Some(r"C:\Program Files\WindowsApps\com.tinyspeck.slackdesktop_4.52.171.0_x64__8yrtsj140pw4g\app\Slack.exe"),
+            ),
+            ("ignored", Some("/usr/lib/slack/slack")),
+        ] {
+            assert_eq!(source(&process(name, executable, None)), Some(ProcessKind::Slack));
+        }
+        for bundle_id in ["com.tinyspeck.slackmacgap", "com.tinyspeck.slackdesktop_8yrtsj140pw4g"] {
+            assert_eq!(
+                source(&process("Localized Slack", None, Some(bundle_id))),
+                Some(ProcessKind::Slack)
+            );
+        }
+        assert_eq!(source(&process("Slack Helper", None, None)), None);
     }
 
     #[test]

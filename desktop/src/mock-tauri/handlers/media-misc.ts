@@ -24,7 +24,7 @@ const YTDLP_TICK_MS = 100
 // Module-level mock state (survives across invokes for the lifetime of the page).
 let dictationIndicatorEnabled = false
 let meetingDetectionEnabled = false
-let meetingPromptState: { source: 'meet' | 'zoom' | 'teams' } | null = null
+let meetingPromptState: { source: 'meet' | 'zoom' | 'teams' | 'slack' } | null = null
 
 function sleep(ms: number) {
 	return new Promise<void>((resolve) => setTimeout(resolve, ms))

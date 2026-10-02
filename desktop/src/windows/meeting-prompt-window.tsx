@@ -2,7 +2,7 @@ import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { Check, Mic, Volume2 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useState } from 'react'
-import { GoogleMeetIcon, MicrosoftTeamsIcon, ZoomIcon } from '~/components/meeting-service-icons'
+import { GoogleMeetIcon, MicrosoftTeamsIcon, SlackIcon, ZoomIcon } from '~/components/meeting-service-icons'
 import { Button } from '~/components/ui/button'
 import { CONFIG_KEYS } from '~/lib/config-keys'
 import { readConfig } from '~/lib/config-store'
@@ -24,12 +24,14 @@ const serviceNames: Record<MeetingSource, string> = {
 	meet: 'Google Meet',
 	zoom: 'Zoom',
 	teams: 'Microsoft Teams',
+	slack: 'Slack',
 }
 
 function ServiceIcon({ source }: { source: MeetingSource }) {
 	const className = 'h-7 w-7'
 	if (source === 'meet') return <GoogleMeetIcon className={className} />
 	if (source === 'zoom') return <ZoomIcon className={className} />
+	if (source === 'slack') return <SlackIcon className={className} />
 	return <MicrosoftTeamsIcon className={className} />
 }
 

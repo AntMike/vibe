@@ -34,6 +34,7 @@ const TITLE_SCAN_INTERVAL: Duration = Duration::from_millis(1000);
 pub enum Source {
     Zoom,
     Teams,
+    Slack,
     Meet,
 }
 
@@ -57,6 +58,7 @@ impl MeetingState {
 pub(crate) enum ProcessKind {
     Zoom,
     Teams,
+    Slack,
     Browser,
 }
 
@@ -164,6 +166,10 @@ fn classify_active(processes: Vec<ProcessInfo>, scan_titles: bool) -> MeetingSta
     }
     if processes.iter().any(|info| process::source(info) == Some(ProcessKind::Teams)) {
         return attributed(Source::Teams);
+    }
+    // Slack only opens the microphone for huddles and calls.
+    if processes.iter().any(|info| process::source(info) == Some(ProcessKind::Slack)) {
+        return attributed(Source::Slack);
     }
 
     if !scan_titles {
@@ -393,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn zoom_and_teams_take_priority_over_browser_fallback() {
+    fn native_apps_take_priority_over_browser_fallback() {
         assert_eq!(
             classify_active(vec![process("chrome"), process("zoom")], true).source,
             Some(Source::Zoom)
@@ -401,6 +407,10 @@ mod tests {
         assert_eq!(
             classify_active(vec![process("firefox"), process("ms-teams")], true).source,
             Some(Source::Teams)
+        );
+        assert_eq!(
+            classify_active(vec![process("chrome"), process("slack.exe")], true).source,
+            Some(Source::Slack)
         );
     }
 
