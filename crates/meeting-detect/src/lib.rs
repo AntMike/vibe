@@ -103,6 +103,16 @@ pub fn request_screen_recording() -> bool {
     }
 }
 
+/// The apps holding the microphone right now: an executable path, or a package family name
+/// (e.g. `MSTeams_8wekyb3d8bbwe`) for Store apps.
+pub fn mic_owners() -> Vec<String> {
+    mic::current_usage()
+        .processes
+        .into_iter()
+        .filter_map(|p| p.executable.or(p.bundle_id))
+        .collect()
+}
+
 /// Perform one synchronous poll.
 pub fn detect() -> MeetingState {
     poll(true).state

@@ -25,6 +25,8 @@ use tauri::Emitter;
 mod dock;
 
 #[cfg(windows)]
+mod call_capture;
+#[cfg(windows)]
 mod custom_protocol;
 
 use eyre::{eyre, Result};

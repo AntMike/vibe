@@ -61,7 +61,33 @@ pub fn get_audio_devices() -> Result<Vec<AudioDevice>> {
     Ok(audio_devices)
 }
 
-struct StreamHandle(Stream);
+enum Capture {
+    Device(Stream),
+    #[cfg(windows)]
+    App(crate::call_capture::Worker),
+}
+
+struct StreamHandle(Capture);
+
+impl StreamHandle {
+    fn stop(self) {
+        match self.0 {
+            Capture::Device(stream) => {
+                stream.pause().map_err(|e| eyre!("{:?}", e)).log_error();
+            }
+            #[cfg(windows)]
+            Capture::App(worker) => worker.stop(),
+        }
+    }
+}
+
+/// True while the call app (Teams/Slack) reports you as muted: the mic track gets silence.
+fn mic_muted() -> bool {
+    #[cfg(windows)]
+    return crate::call_capture::MIC_MUTED.load(Ordering::Relaxed);
+    #[cfg(not(windows))]
+    false
+}
 unsafe impl Send for StreamHandle {}
 unsafe impl Sync for StreamHandle {}
 
@@ -160,12 +186,40 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
     // One meter for the whole session: input and output streams both feed it, so the UI sees
     // the max of the two under a single throttled `record_level` event.
     let meter = Arc::new(LevelMeter::new(app_handle.clone()));
+    // On Windows, "system audio" means only the call app's sound, and the mic follows its mute.
+    #[cfg(windows)]
+    let call_app = crate::call_capture::find_call_app();
+    #[cfg(windows)]
+    let mut mute_watch = None;
 
     for device in devices {
         tracing::debug!("Recording from device: {}", device.name);
         tracing::debug!("Device ID: {}", device.id);
 
         let is_input = device.is_input;
+
+        #[cfg(windows)]
+        if let (false, Some((app, pid))) = (is_input, call_app) {
+            use tauri::Manager;
+            tracing::info!("Recording only pid {pid} ({app:?}) instead of {}", device.name);
+            let path = get_vibe_temp_folder().join(format!("{}.wav", random_string(10)));
+            wav_paths.push((path.clone(), 0));
+            let writer: WavWriterHandle = Arc::new(Mutex::new(Some(hound::WavWriter::create(
+                &path,
+                crate::call_capture::wav_spec(),
+            )?)));
+            stream_writers.push(writer.clone());
+            let meter = meter.clone();
+            let worker = crate::call_capture::start_app_loopback(pid, move |samples| {
+                meter.push(buffer_peak(samples));
+                write_input_data::<f32, f32>(samples, &writer);
+            });
+            stream_handles.push(Arc::new(Mutex::new(Some(StreamHandle(Capture::App(worker))))));
+            let token_file = app_handle.path().app_local_data_dir()?.join("teams_api_token.txt");
+            // Only Teams and Slack expose a mute state; for anything else the mic just records.
+            mute_watch = app.map(|app| crate::call_capture::start_mute_watch(app, pid, token_file));
+            continue;
+        }
         let (device, config) = if is_input {
             let device_id: usize = device.id.parse().context("Failed to parse device ID")?;
             let dev = host.devices()?.nth(device_id).context("Failed to get device by ID")?;
@@ -185,11 +239,11 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
         stream_writers.push(writer.clone());
         let writer_2 = writer.clone();
 
-        let stream = build_input_stream(&device, config, writer_2, meter.clone())?;
+        let stream = build_input_stream(&device, config, writer_2, meter.clone(), is_input)?;
         stream.play()?;
         tracing::debug!("Stream started playing");
 
-        let stream_handle = Arc::new(Mutex::new(Some(StreamHandle(stream))));
+        let stream_handle = Arc::new(Mutex::new(Some(StreamHandle(Capture::Device(stream)))));
         stream_handles.push(stream_handle.clone());
         tracing::debug!("Stream handle created");
     }
@@ -203,7 +257,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
                 let writer = stream_writers[i].clone();
                 if let Some(stream) = stream {
                     tracing::debug!("Pausing stream");
-                    stream.0.pause().map_err(|e| eyre!("{:?}", e)).log_error();
+                    stream.stop();
                     tracing::debug!("Finalizing writer");
                     let writer = writer.lock().expect("lock").take().expect("writer");
                     let written = writer.len();
@@ -211,6 +265,11 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
                     writer.finalize().map_err(|e| eyre!("{:?}", e)).log_error();
                 }
             }
+        }
+
+        #[cfg(windows)]
+        if let Some(watch) = mute_watch {
+            watch.stop();
         }
 
         let Some(best_raw) = best_raw_capture(&wav_paths) else {
@@ -329,6 +388,7 @@ fn build_input_stream_typed<T>(
     config: SupportedStreamConfig,
     writer: WavWriterHandle,
     meter: Arc<LevelMeter>,
+    is_mic: bool,
 ) -> Result<Stream>
 where
     T: SizedSample + hound::Sample + FromSample<T> + Mul<Output = T> + Copy,
@@ -337,6 +397,13 @@ where
     let stream = device.build_input_stream(
         config.into(),
         move |data: &[T], _: &_| {
+            if is_mic && mic_muted() {
+                // Keep the timeline: same number of samples, all silent.
+                meter.push(0.0);
+                let silence = vec![T::EQUILIBRIUM; data.len()];
+                write_input_data::<T, T>(&silence, &writer);
+                return;
+            }
             meter.push(buffer_peak(data));
             write_input_data::<T, T>(data, &writer)
         },
@@ -351,12 +418,13 @@ fn build_input_stream(
     config: SupportedStreamConfig,
     writer: WavWriterHandle,
     meter: Arc<LevelMeter>,
+    is_mic: bool,
 ) -> Result<Stream> {
     match config.sample_format() {
-        cpal::SampleFormat::I8 => build_input_stream_typed::<i8>(device, config, writer, meter),
-        cpal::SampleFormat::I16 => build_input_stream_typed::<i16>(device, config, writer, meter),
-        cpal::SampleFormat::I32 => build_input_stream_typed::<i32>(device, config, writer, meter),
-        cpal::SampleFormat::F32 => build_input_stream_typed::<f32>(device, config, writer, meter),
+        cpal::SampleFormat::I8 => build_input_stream_typed::<i8>(device, config, writer, meter, is_mic),
+        cpal::SampleFormat::I16 => build_input_stream_typed::<i16>(device, config, writer, meter, is_mic),
+        cpal::SampleFormat::I32 => build_input_stream_typed::<i32>(device, config, writer, meter, is_mic),
+        cpal::SampleFormat::F32 => build_input_stream_typed::<f32>(device, config, writer, meter, is_mic),
         sample_format => bail!("Unsupported sample format '{}'", sample_format),
     }
 }
