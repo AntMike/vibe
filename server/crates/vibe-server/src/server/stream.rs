@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -6,39 +5,19 @@ use axum::body::Body;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use whisper_rs::StreamCallbacks;
+use whisper_rs::{StreamCallbacks, TranscribeOptions};
 
-use crate::cli::AppConfig;
 use crate::server::diarization;
-use crate::server::transcription::build_options;
+use crate::server::format;
 use crate::server::unload_timeout::ModelLease;
-use crate::server::{error, format};
 
+/// Callers check that a model is loaded and the options suit it.
 pub(super) fn stream_transcription(
-    config: AppConfig,
     mut model: ModelLease,
     samples: Vec<f32>,
-    form: HashMap<String, String>,
-    stable_timestamps: bool,
-    vad_model_path: Option<String>,
+    opts: TranscribeOptions,
     diar_segments: Vec<diarization::Segment>,
-) -> Result<Response, Box<Response>> {
-    if model.ctx.is_none() {
-        return Err(Box::new(error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no_model",
-            "no model loaded",
-        )));
-    }
-    if model.ctx.as_ref().is_some_and(|ctx| ctx.requires_vad()) && vad_model_path.is_none() {
-        return Err(Box::new(error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "'vad_model' is required for this transcription engine",
-        )));
-    }
-
-    let opts = build_options(&form, config.verbose(), stable_timestamps, vad_model_path);
+) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::convert::Infallible>>();
     let aborted = Arc::new(AtomicBool::new(false));
     let abort_for_progress = Arc::clone(&aborted);
@@ -129,7 +108,7 @@ pub(super) fn stream_transcription(
     });
 
     let stream = UnboundedReceiverStream::new(rx);
-    Ok((
+    (
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "application/x-ndjson"),
@@ -138,7 +117,7 @@ pub(super) fn stream_transcription(
         ],
         Body::from_stream(stream),
     )
-        .into_response())
+        .into_response()
 }
 
 fn send_event(

@@ -32,6 +32,21 @@ pub struct TranscribeOptions {
     pub beam_size: i32,
     pub stable_timestamps: bool,
     pub vad_model_path: Option<String>,
+    /// Candidates for language auto-detection; empty means every language.
+    pub languages: Vec<String>,
+    /// When set, each window is transcribed on its own, with its own language
+    /// when the language is auto. Audio outside every window is skipped.
+    pub windows: Vec<Window>,
+}
+
+/// A slice of the input transcribed on its own, such as one speaker turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Window {
+    pub start_sample: usize,
+    pub end_sample: usize,
+    /// Windows of one group (one speaker) share a fallback language for when
+    /// a window is too short or unclear to detect its own.
+    pub group: usize,
 }
 
 impl Default for TranscribeOptions {
@@ -52,6 +67,8 @@ impl Default for TranscribeOptions {
             beam_size: 0,
             stable_timestamps: false,
             vad_model_path: None,
+            languages: Vec::new(),
+            windows: Vec::new(),
         }
     }
 }

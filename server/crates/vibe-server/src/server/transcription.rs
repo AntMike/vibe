@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use whisper_rs::TranscribeOptions;
+use whisper_rs::{TranscribeOptions, Window};
 
 use crate::audio;
 use crate::cli::AppConfig;
@@ -47,7 +47,7 @@ pub(super) async fn transcribe(
         )
     })?;
 
-    let diar_segments = diarize_model
+    let mut diar_segments = diarize_model
         .as_deref()
         .map_or_else(Vec::new, |model_path| diarization::diarize(model_path, &samples));
 
@@ -59,12 +59,6 @@ pub(super) async fn transcribe(
         ));
     }
 
-    if stream {
-        return stream_transcription(config, model, samples, form, stable_timestamps, vad_model_path, diar_segments)
-            .map_err(|err| *err);
-    }
-
-    let verbose = config.verbose();
     let ctx = model
         .ctx
         .as_mut()
@@ -78,7 +72,30 @@ pub(super) async fn transcribe(
         ));
     }
 
-    let opts = build_options(&form, verbose, stable_timestamps, vad_model_path);
+    let mut opts = build_options(&form, config.verbose(), stable_timestamps, vad_model_path);
+    if let Some(unknown) = opts
+        .languages
+        .iter()
+        .find(|lang| !whisper_rs::supported_languages().contains(lang))
+    {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            &format!("unknown language in 'languages': {unknown}"),
+        ));
+    }
+    // Each speaker turn is transcribed on its own, so a line never spans two
+    // speakers and each turn is decoded in its own language. Speakers are then
+    // matched against the chunks decoded rather than the raw turns.
+    if ctx.transcribes_windows(&opts) && !diar_segments.is_empty() {
+        diar_segments = diarization::speaker_chunks(&diar_segments, &samples);
+        opts.windows = diar_segments.iter().map(window).collect();
+    }
+
+    if stream {
+        return Ok(stream_transcription(model, samples, opts, diar_segments));
+    }
+
     let result = ctx.transcribe(&samples, opts).map_err(|err| {
         tracing::error!(samples = samples.len(), "transcription failed: {err:#}");
         error(
@@ -114,6 +131,27 @@ pub(super) fn build_options(
         beam_size: values.i32("beam_size"),
         stable_timestamps,
         vad_model_path,
+        languages: values
+            .string("languages")
+            .map(|languages| {
+                languages
+                    .split(',')
+                    .map(|lang| lang.trim().to_string())
+                    .filter(|lang| !lang.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        windows: Vec::new(),
+    }
+}
+
+const SAMPLE_RATE: f64 = 16_000.0;
+
+fn window(chunk: &diarization::Segment) -> Window {
+    Window {
+        start_sample: (chunk.start * SAMPLE_RATE) as usize,
+        end_sample: (chunk.end * SAMPLE_RATE).ceil() as usize,
+        group: chunk.speaker_id,
     }
 }
 

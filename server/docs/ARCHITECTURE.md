@@ -112,6 +112,9 @@ Transcription:
     - `stream`: `true|false`
     - `language`
     - `detect_language`
+    - `languages`: comma-separated candidates for auto-detection, e.g. `en,uk`
+    - `diarize_model`: with a Whisper or Parakeet model, each speaker turn is
+      transcribed on its own, in its own detected language
     - `prompt`
     - `enhance_audio`
 

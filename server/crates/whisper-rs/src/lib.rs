@@ -44,7 +44,7 @@ mod vocab;
 mod stub;
 
 pub use error::{Error, Result};
-pub use options::{ContextOptions, StreamCallbacks, TranscribeOptions};
+pub use options::{ContextOptions, StreamCallbacks, TranscribeOptions, Window};
 
 #[cfg(feature = "ffi")]
 pub use context::{set_verbose, Context};
@@ -188,6 +188,8 @@ pub struct FullParams {
     /// None or "auto" triggers language auto-detection on multilingual models.
     pub language: Option<String>,
     pub detect_language: bool,
+    /// Candidates for auto-detection; empty means every language.
+    pub languages: Vec<String>,
 
     pub suppress_blank: bool,
     pub suppress_nst: bool,
@@ -230,6 +232,7 @@ impl Default for FullParams {
             carry_initial_prompt: false,
             language: Some("en".to_string()),
             detect_language: false,
+            languages: Vec::new(),
             suppress_blank: true,
             suppress_nst: false,
             temperature: 0.0,
@@ -302,6 +305,12 @@ impl Whisper {
 
     pub fn lang_str(id: i32) -> Option<&'static str> {
         lang::lang_str(id as usize)
+    }
+
+    /// Detect the language of `samples` (16 kHz mono f32) among `allowed`
+    /// (every language when empty). Returns the language id and its probability.
+    pub fn detect_language(&mut self, samples: &[f32], n_threads: i32, allowed: &[String]) -> Result<(i32, f32)> {
+        full::detect_language(&self.model, &mut self.state, &mut self.runtime, samples, n_threads, allowed)
     }
 
     /// Transcribe `samples` (16 kHz mono f32) — the `whisper_full` port.

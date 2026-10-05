@@ -18,11 +18,26 @@ use crate::{Error, FullCallbacks, FullParams, FullSegment, SamplingStrategy};
 /// `whisper.cpp`'s cutoff above which history conditioning is dropped.
 const HISTORY_CONDITIONING_TEMP_CUTOFF: f32 = 0.5;
 
-/// `whisper_lang_auto_detect_with_state`.
-fn lang_auto_detect(model: &Model, state: &mut State, rt: &mut Runtime, n_threads: i32) -> Result<i32, Error> {
+/// `whisper_lang_auto_detect_with_state`, restricted to `allowed` (all languages
+/// when empty). Returns the best language id and its probability among the candidates.
+fn lang_auto_detect(
+    model: &Model,
+    state: &mut State,
+    rt: &mut Runtime,
+    n_threads: i32,
+    allowed: &[String],
+) -> Result<(i32, f32), Error> {
     let span = tracing::info_span!("lang_detect");
     let _guard = span.enter();
 
+    let candidates: Vec<usize> = if allowed.is_empty() {
+        (0..lang::LANGUAGES.len()).collect()
+    } else {
+        allowed
+            .iter()
+            .map(|code| lang::lang_id(code).ok_or_else(|| Error::UnknownLanguage(code.clone())))
+            .collect::<Result<_, _>>()?
+    };
     if state.mel.n_len_org <= 0 {
         return Err(Error::LanguageDetection);
     }
@@ -34,18 +49,33 @@ fn lang_auto_detect(model: &Model, state: &mut State, rt: &mut Runtime, n_thread
     decode(model, state, rt, &batch, n_threads)?;
     state.batch = batch;
 
-    let mut best = (f32::NEG_INFINITY, -1i32);
-    for id in 0..lang::LANGUAGES.len() {
-        let logit = state.logits[model.vocab.token_lang(id) as usize];
-        if logit > best.0 {
-            best = (logit, id as i32);
-        }
-    }
-    if best.1 < 0 {
-        return Err(Error::LanguageDetection);
-    }
-    tracing::info!(lang = lang::lang_str(best.1 as usize), "auto-detected language");
-    Ok(best.1)
+    let logits: Vec<f32> = candidates
+        .iter()
+        .map(|&id| state.logits[model.vocab.token_lang(id) as usize])
+        .collect();
+    let (best, max) = logits
+        .iter()
+        .copied()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .ok_or(Error::LanguageDetection)?;
+    let prob = 1.0 / logits.iter().map(|logit| (logit - max).exp()).sum::<f32>();
+    let id = candidates[best];
+    tracing::info!(lang = lang::lang_str(id), prob, "auto-detected language");
+    Ok((id as i32, prob))
+}
+
+/// Detect the language of `samples` alone, without transcribing them.
+pub(crate) fn detect_language(
+    model: &Model,
+    state: &mut State,
+    rt: &mut Runtime,
+    samples: &[f32],
+    n_threads: i32,
+    allowed: &[String],
+) -> Result<(i32, f32), Error> {
+    state.mel = log_mel_spectrogram(samples, &model.filters, model.filters.n_mel);
+    lang_auto_detect(model, state, rt, n_threads, allowed)
 }
 
 struct BeamCandidate {
@@ -87,7 +117,7 @@ pub(crate) fn full(
             .map(|l| l.is_empty() || l == "auto")
             .unwrap_or(true);
     if needs_detect {
-        let lang_id = lang_auto_detect(model, state, rt, params.n_threads)?;
+        let (lang_id, _) = lang_auto_detect(model, state, rt, params.n_threads, &params.languages)?;
         state.lang_id = lang_id;
         params.language = lang::lang_str(lang_id as usize).map(str::to_string);
         if params.detect_language {
