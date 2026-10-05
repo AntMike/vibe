@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { emit, listen } from '@tauri-apps/api/event'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { isRegistered, register, unregister } from '@tauri-apps/plugin-global-shortcut'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -34,6 +35,12 @@ export function useRecordingShortcut() {
 
 function errorDescription(error: unknown) {
 	return error instanceof Error ? error.message : String(error)
+}
+
+async function showMainWindow() {
+	const window = getCurrentWebviewWindow()
+	await Promise.all([window.unminimize(), window.show()]).catch(() => undefined)
+	await window.setFocus().catch(() => undefined)
 }
 
 export function RecordingShortcutProvider({ children }: { children: ReactNode }) {
@@ -102,6 +109,8 @@ export function RecordingShortcutProvider({ children }: { children: ReactNode })
 	useEffect(() => {
 		const unlisten = listen<MeetingRecordingOptions>('meeting-prompt-start-recording', async ({ payload }) => {
 			const started = await startRecording(payload)
+			// The prompt and auto-record fire while Vibe sits hidden; bring it up so the error toast is seen.
+			if (!started) await showMainWindow()
 			await emit('meeting-prompt-recording-result', { started })
 		})
 		return () => {
