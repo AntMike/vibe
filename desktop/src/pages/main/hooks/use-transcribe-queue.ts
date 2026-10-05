@@ -15,6 +15,7 @@ import { notify } from '~/lib/notify'
 import { autoProjectName } from '~/lib/project-name'
 import { gpuOutOfMemoryBefore, rememberGpuOutOfMemory } from '~/lib/gpu-memory'
 import { fatalRunError, isGpuOutOfMemory, isUserError, serverErrorCodes } from '~/lib/server-errors'
+import { speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
 	notifyTranscriptsChanged,
@@ -65,6 +66,8 @@ export interface Job {
 	thread?: AiThreadEntry[]
 	/** Names the user gave the diarized speakers, by zero-based speaker index. */
 	speakerNames?: SpeakerNames
+	/** Who the call app showed talking during the recording; names speakers after transcription. */
+	callSpeakers?: CallSpeakerTurn[]
 	/** What auto-export did with this transcript, when it ran. */
 	exported?: AutoExportResult
 }
@@ -428,7 +431,11 @@ export function useTranscribeQueue(): TranscribeQueue {
 						},
 					})
 					const seconds = Math.round((performance.now() - startedAt) / 1000)
-					patch(next.id, { status: 'done', progress: 100, segments: result.segments, seconds })
+					// A recorded call knows who was talking when: give each sentence that person.
+					const fromCall = next.callSpeakers && speakersFromCall(result.segments, next.callSpeakers)
+					const segments = fromCall ? fromCall.segments : result.segments
+					const speakerNames = fromCall ? fromCall.speakerNames : next.speakerNames
+					patch(next.id, { status: 'done', progress: 100, segments, seconds, speakerNames })
 					completedAny = true
 					runDone += 1
 					runSeconds += seconds
@@ -438,12 +445,14 @@ export function useTranscribeQueue(): TranscribeQueue {
 						// re-read the live path so completion can never target the folder's old name.
 						void serializeProjectOperation(next.id, async () => {
 							const savedPath = jobsRef.current.find((candidate) => candidate.id === next.id)?.savedPath
-							if (savedPath && (await updateTranscriptSegments(savedPath, result.segments))) notifyTranscriptsChanged()
+							if (!savedPath || !(await updateTranscriptSegments(savedPath, segments))) return
+							if (fromCall) await updateTranscriptSpeakerNames(savedPath, fromCall.speakerNames)
+							notifyTranscriptsChanged()
 						})
 					} else {
-						persist(next, result.segments)
+						persist(next, segments)
 					}
-					if (!abortCurrentRef.current && !abortAllRef.current) void autoExportJob(next, result.segments)
+					if (!abortCurrentRef.current && !abortAllRef.current) void autoExportJob({ ...next, speakerNames }, segments)
 					// An abort resolves as a success carrying the partial segments, so only these flags tell them apart.
 					if (abortCurrentRef.current || abortAllRef.current) {
 						trackTranscribeCancelled('main', next.path)
@@ -615,6 +624,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 				summary: record.summary,
 				thread: record.thread,
 				speakerNames: record.speakerNames,
+				callSpeakers: record.callSpeakers,
 			}
 			pinnedRef.current = true
 			commit(runningRef.current ? [...jobsRef.current, job] : [job])

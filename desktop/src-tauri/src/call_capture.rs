@@ -5,10 +5,11 @@
 //! - Teams mute: the local "third-party app API" websocket (Teams settings → Privacy →
 //!   Manage API → on). Pair once, in a solo "Meet now", by clicking Allow in Teams.
 //! - Slack mute: UI Automation, reading the huddle mic button's label.
+//! - Slack speakers: UI Automation, reading which huddle tile carries the active-speaker ring.
 //!
 //! Unknown mute state = record the mic. Losing your words is worse than keeping a muted aside.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +18,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use eyre::{Context, Result};
+use serde::Serialize;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 /// Read by the mic stream callback on every buffer.
@@ -120,25 +122,24 @@ pub fn wav_spec() -> hound::WavSpec {
     }
 }
 
-/// Background work that runs until `stop()`.
-pub struct Worker {
+/// Background work that runs until `stop()`, then hands back what it produced.
+pub struct Worker<T = ()> {
     stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
+    thread: Option<JoinHandle<T>>,
 }
 
-impl Worker {
-    fn spawn(name: &str, body: impl FnOnce(Arc<AtomicBool>) + Send + 'static) -> Self {
+impl<T: Send + 'static> Worker<T> {
+    fn spawn(name: &str, body: impl FnOnce(Arc<AtomicBool>) -> T + Send + 'static) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let thread = thread::Builder::new().name(name.into()).spawn(move || body(flag)).ok();
         Self { stop, thread }
     }
 
-    pub fn stop(mut self) {
+    /// `None` when the thread never started or panicked.
+    pub fn stop(mut self) -> Option<T> {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            thread.join().ok();
-        }
+        self.thread.take().and_then(|thread| thread.join().ok())
     }
 }
 
@@ -227,6 +228,60 @@ pub fn start_mute_watch(app: CallApp, pid: u32, teams_token_file: PathBuf) -> Wo
     })
 }
 
+/// A stretch of the recording during which the call app showed `name` talking.
+/// Seconds from the start of the recording.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct SpeakerTurn {
+    pub start: f64,
+    pub end: f64,
+    pub name: String,
+}
+
+/// Folds "who is speaking now" samples into turns.
+#[derive(Default)]
+struct Timeline {
+    turns: Vec<SpeakerTurn>,
+    /// Name -> when their current turn started.
+    open: HashMap<String, f64>,
+}
+
+impl Timeline {
+    fn update(&mut self, now: f64, speaking: &[String]) {
+        let ended: Vec<String> = self.open.keys().filter(|name| !speaking.contains(name)).cloned().collect();
+        for name in ended {
+            let start = self.open.remove(&name).unwrap_or(now);
+            self.turns.push(SpeakerTurn { start, end: now, name });
+        }
+        for name in speaking {
+            self.open.entry(name.clone()).or_insert(now);
+        }
+    }
+
+    fn finish(mut self, now: f64) -> Vec<SpeakerTurn> {
+        self.update(now, &[]);
+        self.turns.sort_by(|a, b| a.start.total_cmp(&b.start));
+        self.turns
+    }
+}
+
+/// Record who the call app shows talking until stopped. `None` for apps that don't show it (Teams).
+pub fn start_speaker_watch(app: CallApp, pid: u32, recording_started: Instant) -> Option<Worker<Vec<SpeakerTurn>>> {
+    if app != CallApp::Slack {
+        return None;
+    }
+    Some(Worker::spawn("call-speaker-watch", move |stop| {
+        let mut timeline = Timeline::default();
+        if let Err(error) = slack::watch_speakers(&stop, pid, |speaking| {
+            timeline.update(recording_started.elapsed().as_secs_f64(), speaking)
+        }) {
+            tracing::error!("slack speaker watch failed: {error}");
+        }
+        let turns = timeline.finish(recording_started.elapsed().as_secs_f64());
+        tracing::info!("slack speaker watch: {} turns", turns.len());
+        turns
+    }))
+}
+
 mod teams {
     use super::MIC_MUTED;
     use std::net::TcpStream;
@@ -304,13 +359,13 @@ mod teams {
 mod slack {
     use super::MIC_MUTED;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use windows::core::BSTR;
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Children, TreeScope_Descendants, UIA_ButtonControlTypeId,
-        UIA_ControlTypePropertyId, UIA_ProcessIdPropertyId,
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker, TreeScope_Children, TreeScope_Descendants,
+        UIA_ButtonControlTypeId, UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ProcessIdPropertyId,
     };
 
     /// `Some(true)` muted, `Some(false)` live, `None` not a huddle mic button.
@@ -386,12 +441,81 @@ mod slack {
             Ok(None)
         }
     }
+
+    /// A huddle tile is labelled "View <name>'s profile"; keep just the name.
+    // ponytail: English UI label; a localized Slack keeps the whole label, which the user can rename.
+    pub(super) fn name_from_tile(label: &str) -> String {
+        let label = label.trim();
+        label
+            .strip_prefix("View ")
+            .and_then(|rest| rest.strip_suffix("'s profile"))
+            .unwrap_or(label)
+            .to_string()
+    }
+
+    /// Call `on_sample` with the names Slack shows talking, about four times a second, until stopped.
+    ///
+    /// Each participant is a `p-huddle_peer_tile`; the one talking has a child whose class includes
+    /// `active_speaker`. That child has no name, so only the raw view shows it, not FindAll.
+    pub fn watch_speakers(stop: &AtomicBool, pid: u32, mut on_sample: impl FnMut(&[String])) -> windows::core::Result<()> {
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
+        let uia: IUIAutomation = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)? };
+        let walker = unsafe { uia.RawViewWalker()? };
+        let mut tiles = Vec::new();
+        let mut found_at: Option<Instant> = None;
+        while !stop.load(Ordering::Relaxed) {
+            // People join and leave: look for tiles again every few seconds.
+            if found_at.is_none_or(|at| at.elapsed() > Duration::from_secs(3)) {
+                tiles = find_tiles(&uia, pid).unwrap_or_default();
+                found_at = Some(Instant::now());
+            }
+            let speaking: Vec<String> = tiles
+                .iter()
+                .filter(|tile| is_speaking(&walker, tile))
+                .filter_map(|tile| unsafe { tile.CurrentName() }.ok())
+                .map(|label| name_from_tile(&label.to_string()))
+                .filter(|name| !name.is_empty())
+                .collect();
+            on_sample(&speaking);
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        Ok(())
+    }
+
+    fn find_tiles(uia: &IUIAutomation, pid: u32) -> windows::core::Result<Vec<IUIAutomationElement>> {
+        unsafe {
+            let by_pid = uia.CreatePropertyCondition(UIA_ProcessIdPropertyId, &VARIANT::from(pid as i32))?;
+            let by_class =
+                uia.CreatePropertyCondition(UIA_ClassNamePropertyId, &VARIANT::from(BSTR::from("p-huddle_peer_tile")))?;
+            let windows = uia.GetRootElement()?.FindAll(TreeScope_Children, &by_pid)?;
+            let mut tiles = Vec::new();
+            for w in 0..windows.Length()? {
+                let found = windows.GetElement(w)?.FindAll(TreeScope_Descendants, &by_class)?;
+                for t in 0..found.Length()? {
+                    tiles.push(found.GetElement(t)?);
+                }
+            }
+            Ok(tiles)
+        }
+    }
+
+    fn is_speaking(walker: &IUIAutomationTreeWalker, tile: &IUIAutomationElement) -> bool {
+        let mut child = unsafe { walker.GetFirstChildElement(tile) }.ok();
+        while let Some(element) = child {
+            let class = unsafe { element.CurrentClassName() }.unwrap_or_default().to_string();
+            if class.contains("active_speaker") {
+                return true;
+            }
+            child = unsafe { walker.GetNextSiblingElement(&element) }.ok();
+        }
+        false
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::owns;
-    use super::slack::mute_from_label;
+    use super::slack::{mute_from_label, name_from_tile};
+    use super::{owns, SpeakerTurn, Timeline};
 
     #[test]
     fn mic_owner_matching() {
@@ -410,5 +534,27 @@ mod tests {
         assert_eq!(mute_from_label("Unmute"), Some(true));
         assert_eq!(mute_from_label("Mute channel"), None);
         assert_eq!(mute_from_label("Microphone settings"), None);
+    }
+
+    #[test]
+    fn slack_tile_names() {
+        assert_eq!(name_from_tile("View Alex Petrachenko's profile"), "Alex Petrachenko");
+        assert_eq!(name_from_tile(" Profile of Olena "), "Profile of Olena");
+    }
+
+    #[test]
+    fn speaking_samples_become_turns() {
+        let mut timeline = Timeline::default();
+        let (alex, serhii) = ("Alex".to_string(), "Serhii".to_string());
+        timeline.update(0.0, &[]);
+        timeline.update(1.0, &[alex.clone()]);
+        timeline.update(2.0, &[alex.clone(), serhii.clone()]);
+        timeline.update(3.0, &[serhii.clone()]);
+        let turn = |start, end, name: &str| SpeakerTurn {
+            start,
+            end,
+            name: name.into(),
+        };
+        assert_eq!(timeline.finish(4.0), vec![turn(1.0, 3.0, "Alex"), turn(2.0, 4.0, "Serhii")]);
     }
 }

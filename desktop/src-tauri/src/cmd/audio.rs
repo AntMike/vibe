@@ -76,7 +76,9 @@ impl StreamHandle {
                 stream.pause().map_err(|e| eyre!("{:?}", e)).log_error();
             }
             #[cfg(windows)]
-            Capture::App(worker) => worker.stop(),
+            Capture::App(worker) => {
+                worker.stop();
+            }
         }
     }
 }
@@ -191,6 +193,11 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
     let call_app = crate::call_capture::find_call_app();
     #[cfg(windows)]
     let mut mute_watch = None;
+    // Who the call app shows talking, to name who said each sentence once transcribed.
+    #[cfg(windows)]
+    let mut speaker_watch = None;
+    #[cfg(windows)]
+    let recording_started = Instant::now();
 
     for device in devices {
         tracing::debug!("Recording from device: {}", device.name);
@@ -218,6 +225,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
             let token_file = app_handle.path().app_local_data_dir()?.join("teams_api_token.txt");
             // Only Teams and Slack expose a mute state; for anything else the mic just records.
             mute_watch = app.map(|app| crate::call_capture::start_mute_watch(app, pid, token_file));
+            speaker_watch = app.and_then(|app| crate::call_capture::start_speaker_watch(app, pid, recording_started));
             continue;
         }
         let (device, config) = if is_input {
@@ -271,6 +279,10 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
         if let Some(watch) = mute_watch {
             watch.stop();
         }
+        #[cfg(windows)]
+        let speakers = json!(speaker_watch.and_then(|watch| watch.stop()).unwrap_or_default());
+        #[cfg(not(windows))]
+        let speakers = json!([]);
 
         let Some(best_raw) = best_raw_capture(&wav_paths) else {
             tracing::error!("Recording stopped without any capture files");
@@ -348,6 +360,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
                     "path": output.to_string_lossy(),
                     "name": output.file_name().map(|n| n.to_str().unwrap_or_default()).unwrap_or_default(),
                     "warning": warning,
+                    "speakers": speakers,
                 }),
             )
             .map_err(|e| eyre!("{e:?}"))

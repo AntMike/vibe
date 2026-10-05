@@ -9,6 +9,7 @@ import { m } from '~/paraglide/messages.js'
 import * as config from '~/lib/config'
 import { pathToNamedPath } from '~/lib/fs'
 import { cleanupPartialDownloads, listInstalledModels, type InstalledModel } from '~/lib/model'
+import type { CallSpeakerTurn } from '~/lib/call-speakers'
 import { autoProjectName } from '~/lib/project-name'
 import { notifyTranscriptsChanged, saveTranscript, TRANSCRIPT_VERSION, type TranscriptRecord } from '~/lib/transcripts-store'
 import type { NamedPath, ProjectSource } from '~/lib/types'
@@ -55,6 +56,14 @@ export function useSession() {
 }
 
 const mediaExtensions = [...config.audioExtensions, ...config.videoExtensions]
+
+/** What Rust sends when a recording stops; `speakers` is who the call app showed talking. */
+interface RecordFinish {
+	path: string
+	name: string
+	warning?: string
+	speakers?: CallSpeakerTurn[]
+}
 
 export function SessionProvider({ children }: { children: ReactNode }) {
 	const navigate = useNavigate()
@@ -157,7 +166,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	// A recording becomes a durable project first. Transcription is an optional second step which
 	// updates that same project, so a failed/disabled transcription never costs the user the audio.
 	useEffect(() => {
-		const unlisten: Promise<UnlistenFn> = listen<{ path: string; name: string; warning?: string }>('record_finish', async ({ payload }) => {
+		const unlisten: Promise<UnlistenFn> = listen<RecordFinish>('record_finish', async ({ payload }) => {
 			if (hotkeyRecordingActive) return
 			recording.setIsRecording(false)
 			setPanel('none')
@@ -175,6 +184,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				language: current.modelOptions.lang,
 				modelPath: current.modelPath,
 				createdAt,
+				callSpeakers: payload.speakers,
 			})
 			if (!saved) {
 				const message = `Failed to save recording project; the recording remains at ${payload.path}`
@@ -191,6 +201,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				language: current.modelOptions.lang,
 				modelPath: current.modelPath,
 				segments: [],
+				callSpeakers: payload.speakers?.length ? payload.speakers : undefined,
 			}
 			const jobId = hydrate(record, saved.recordPath, saved.mediaPath, 'record')
 			notifyTranscriptsChanged()
