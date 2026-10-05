@@ -47,6 +47,8 @@ export const CONFIG_KEYS = {
 	recordingShortcutEnabled: 'recording.shortcutEnabled',
 	recordingShortcut: 'recording.shortcut',
 	meetingDetectionEnabled: 'recording.meetingDetectionEnabled',
+	/** Read by meeting_prompt.rs too. */
+	autoRecordSlackHuddles: 'recording.autoRecordSlackHuddles',
 	autoTranscribeAfterRecording: 'recording.autoTranscribeAfterRecording',
 
 	// Reading the transcript

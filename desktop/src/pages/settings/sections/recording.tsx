@@ -7,6 +7,8 @@ import { MeetingServiceIcons } from '~/components/meeting-service-icons'
 import { Button } from '~/components/ui/button'
 import { Switch } from '~/components/ui/switch'
 import { getDefaultRecordingShortcut } from '~/lib/config'
+import { CONFIG_KEYS } from '~/lib/config-keys'
+import { usePersisted } from '~/lib/config-store'
 import type { PermissionStatus } from '~/lib/permissions'
 import { m } from '~/paraglide/messages.js'
 import { useRecordingShortcut } from '~/providers/recording-shortcut'
@@ -150,6 +152,7 @@ export function RecordingSection() {
 	const shortcut = useRecordingShortcut()
 	const { meetingDetectionEnabled, setMeetingDetectionEnabled, autoTranscribeAfterRecording, setAutoTranscribeAfterRecording } = usePreferenceProvider()
 	const isMacOS = platform() === 'macos'
+	const [autoRecordSlack, setAutoRecordSlack] = usePersisted(CONFIG_KEYS.autoRecordSlackHuddles, false)
 
 	return (
 		<div className="space-y-6">
@@ -158,6 +161,11 @@ export function RecordingSection() {
 					<Switch checked={meetingDetectionEnabled} onCheckedChange={setMeetingDetectionEnabled} aria-label={m.meetingDetection()} />
 				</SettingsRow>
 				<MeetPermissionRow enabled={meetingDetectionEnabled} />
+				{meetingDetectionEnabled && platform() === 'windows' && (
+					<SettingsRow label={m.autoRecordSlackHuddles()} description={m.autoRecordSlackHuddlesInfo()}>
+						<Switch checked={autoRecordSlack} onCheckedChange={setAutoRecordSlack} aria-label={m.autoRecordSlackHuddles()} />
+					</SettingsRow>
+				)}
 			</SettingsGroup>
 
 			<SettingsGroup title={m.recordingControls()}>
