@@ -19,6 +19,7 @@ mod server;
 mod setup;
 mod transcript;
 mod tray;
+mod voice_activity;
 use tauri::Emitter;
 
 #[cfg(target_os = "macos")]

@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Listener};
 
 use crate::error::LogError;
 use crate::ffmpeg::{get_local_time, random_string};
+use crate::voice_activity::{self, Loudness};
 
 type WavWriterHandle = Arc<Mutex<Option<hound::WavWriter<BufWriter<File>>>>>;
 
@@ -185,6 +186,9 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
     let mut wav_paths: Vec<(PathBuf, u32)> = Vec::new();
     let mut stream_handles = Vec::new();
     let mut stream_writers = Vec::new();
+    // Each track's loudness, and whether it is the mic: speech on the mic alone is you.
+    let mut stream_loudness: Vec<Arc<Mutex<Loudness>>> = Vec::new();
+    let mut stream_is_mic = Vec::new();
     // One meter for the whole session: input and output streams both feed it, so the UI sees
     // the max of the two under a single throttled `record_level` event.
     let meter = Arc::new(LevelMeter::new(app_handle.clone()));
@@ -216,10 +220,14 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
                 crate::call_capture::wav_spec(),
             )?)));
             stream_writers.push(writer.clone());
+            let spec = crate::call_capture::wav_spec();
+            let loudness = Arc::new(Mutex::new(Loudness::new(spec.sample_rate, spec.channels)));
+            stream_loudness.push(loudness.clone());
+            stream_is_mic.push(false);
             let meter = meter.clone();
             let worker = crate::call_capture::start_app_loopback(pid, move |samples| {
                 meter.push(buffer_peak(samples));
-                write_input_data::<f32, f32>(samples, &writer);
+                write_input_data::<f32, f32>(samples, &writer, &loudness);
             });
             stream_handles.push(Arc::new(Mutex::new(Some(StreamHandle(Capture::App(worker))))));
             let token_file = app_handle.path().app_local_data_dir()?.join("teams_api_token.txt");
@@ -246,8 +254,11 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
         let writer = Arc::new(Mutex::new(Some(writer)));
         stream_writers.push(writer.clone());
         let writer_2 = writer.clone();
+        let loudness = Arc::new(Mutex::new(Loudness::new(spec.sample_rate, spec.channels)));
+        stream_loudness.push(loudness.clone());
+        stream_is_mic.push(is_input);
 
-        let stream = build_input_stream(&device, config, writer_2, meter.clone(), is_input)?;
+        let stream = build_input_stream(&device, config, writer_2, loudness, meter.clone(), is_input)?;
         stream.play()?;
         tracing::debug!("Stream started playing");
 
@@ -280,9 +291,17 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
             watch.cancel();
         }
         #[cfg(windows)]
-        let speakers = json!(speaker_watch.and_then(|watch| watch.stop()).unwrap_or_default());
+        let turns = speaker_watch.and_then(|watch| watch.stop()).unwrap_or_default();
         #[cfg(not(windows))]
-        let speakers = json!([]);
+        let turns = Vec::new();
+        let frames = |mic: bool| {
+            let index = stream_is_mic.iter().position(|is_mic| *is_mic == mic)?;
+            stream_loudness[index].lock().ok().map(|loudness| loudness.frames().to_vec())
+        };
+        let speakers = json!(match (frames(true), frames(false)) {
+            (Some(mic), Some(call)) => voice_activity::refine_turns(turns, &mic, &call),
+            _ => turns,
+        });
 
         let Some(best_raw) = best_raw_capture(&wav_paths) else {
             tracing::error!("Recording stopped without any capture files");
@@ -414,6 +433,7 @@ fn build_input_stream_typed<T>(
     device: &Device,
     config: SupportedStreamConfig,
     writer: WavWriterHandle,
+    loudness: Arc<Mutex<Loudness>>,
     meter: Arc<LevelMeter>,
     is_mic: bool,
 ) -> Result<Stream>
@@ -428,11 +448,11 @@ where
                 // Keep the timeline: same number of samples, all silent.
                 meter.push(0.0);
                 let silence = vec![T::EQUILIBRIUM; data.len()];
-                write_input_data::<T, T>(&silence, &writer);
+                write_input_data::<T, T>(&silence, &writer, &loudness);
                 return;
             }
             meter.push(buffer_peak(data));
-            write_input_data::<T, T>(data, &writer)
+            write_input_data::<T, T>(data, &writer, &loudness)
         },
         |err| tracing::error!("An error occurred on stream: {}", err),
         None,
@@ -444,14 +464,15 @@ fn build_input_stream(
     device: &Device,
     config: SupportedStreamConfig,
     writer: WavWriterHandle,
+    loudness: Arc<Mutex<Loudness>>,
     meter: Arc<LevelMeter>,
     is_mic: bool,
 ) -> Result<Stream> {
     match config.sample_format() {
-        cpal::SampleFormat::I8 => build_input_stream_typed::<i8>(device, config, writer, meter, is_mic),
-        cpal::SampleFormat::I16 => build_input_stream_typed::<i16>(device, config, writer, meter, is_mic),
-        cpal::SampleFormat::I32 => build_input_stream_typed::<i32>(device, config, writer, meter, is_mic),
-        cpal::SampleFormat::F32 => build_input_stream_typed::<f32>(device, config, writer, meter, is_mic),
+        cpal::SampleFormat::I8 => build_input_stream_typed::<i8>(device, config, writer, loudness, meter, is_mic),
+        cpal::SampleFormat::I16 => build_input_stream_typed::<i16>(device, config, writer, loudness, meter, is_mic),
+        cpal::SampleFormat::I32 => build_input_stream_typed::<i32>(device, config, writer, loudness, meter, is_mic),
+        cpal::SampleFormat::F32 => build_input_stream_typed::<f32>(device, config, writer, loudness, meter, is_mic),
         sample_format => bail!("Unsupported sample format '{}'", sample_format),
     }
 }
@@ -475,11 +496,15 @@ fn wav_spec_from_config(config: &cpal::SupportedStreamConfig) -> hound::WavSpec 
 
 use std::ops::Mul;
 
-fn write_input_data<T, U>(input: &[T], writer: &WavWriterHandle)
+fn write_input_data<T, U>(input: &[T], writer: &WavWriterHandle, loudness: &Mutex<Loudness>)
 where
     T: Sample,
     U: Sample + hound::Sample + FromSample<T> + Mul<Output = U> + Copy,
+    f32: FromSample<T>,
 {
+    if let Ok(mut loudness) = loudness.try_lock() {
+        loudness.push(input.iter().map(|&sample| f32::from_sample(sample)));
+    }
     if let Ok(mut guard) = writer.try_lock() {
         if let Some(writer) = guard.as_mut() {
             for &sample in input.iter() {

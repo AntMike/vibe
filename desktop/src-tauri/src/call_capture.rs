@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
+use crate::voice_activity::SpeakerTurn;
 use eyre::{Context, Result};
-use serde::Serialize;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 /// Read by the mic stream callback on every buffer.
@@ -231,15 +231,6 @@ pub fn start_mute_watch(app: CallApp, pid: u32, teams_token_file: PathBuf) -> Wo
         }
         MIC_MUTED.store(false, Ordering::Relaxed);
     })
-}
-
-/// A stretch of the recording during which the call app showed `name` talking.
-/// Seconds from the start of the recording.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-pub struct SpeakerTurn {
-    pub start: f64,
-    pub end: f64,
-    pub name: String,
 }
 
 /// Folds "who is speaking now" samples into turns.
