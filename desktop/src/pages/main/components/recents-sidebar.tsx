@@ -26,7 +26,7 @@ import { UpdaterContext } from '~/providers/updater'
 import { Spinner } from '~/components/ui/spinner'
 import { useSession } from '../session'
 import RetranscribeDialog from './retranscribe-dialog'
-import type { Job } from '../hooks/use-transcribe-queue'
+import type { Job, PreviousTranscript } from '../hooks/use-transcribe-queue'
 
 /** Resize bounds: never narrower than the rows need, never much wider than the default. */
 const DEFAULT_WIDTH = 288
@@ -145,6 +145,8 @@ interface RowMenuState {
 	/** media to re-transcribe: the original file, else the project folder's copy; null when neither */
 	sourcePath: string | null
 	sourceExists: boolean
+	/** speakers to carry over when re-transcribing */
+	previous?: PreviousTranscript
 }
 
 function RecentRow({
@@ -183,12 +185,13 @@ function RecentRow({
 		} catch (error) {
 			console.warn('failed to check source file:', error)
 		}
+		const previous = { segments: record.segments, speakerNames: record.speakerNames, callSpeakers: record.callSpeakers }
 		if (sourceExists) {
-			setMenu({ sourcePath: record.sourcePath, sourceExists: true })
+			setMenu({ sourcePath: record.sourcePath, sourceExists: true, previous })
 			return
 		}
 		const copy = await resolveProjectAudio(entry.path, record)
-		setMenu({ sourcePath: copy ?? (record.sourcePath || null), sourceExists: !!copy })
+		setMenu({ sourcePath: copy ?? (record.sourcePath || null), sourceExists: !!copy, previous })
 	}, [entry.path])
 
 	async function reveal() {
@@ -211,7 +214,7 @@ function RecentRow({
 
 	function retranscribe() {
 		if (!menu.sourcePath || !menu.sourceExists) return
-		queue.enqueue([{ name: entry.name, path: menu.sourcePath, projectName: entry.name }])
+		queue.enqueue([{ name: entry.name, path: menu.sourcePath, projectName: entry.name, previous: menu.previous }])
 	}
 
 	async function commitRename() {

@@ -15,7 +15,7 @@ import { notify } from '~/lib/notify'
 import { autoProjectName } from '~/lib/project-name'
 import { gpuOutOfMemoryBefore, rememberGpuOutOfMemory } from '~/lib/gpu-memory'
 import { fatalRunError, isGpuOutOfMemory, isUserError, serverErrorCodes } from '~/lib/server-errors'
-import { speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
+import { carrySpeakerNames, speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
 	notifyTranscriptsChanged,
@@ -41,7 +41,11 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
 export interface EnqueueItem extends NamedPath {
 	/** Title of the project this input came from; used verbatim, without a source prefix. */
 	projectName?: string
+	/** The transcript being redone: its speaker names and call speakers carry over to the new one. */
+	previous?: PreviousTranscript
 }
+
+export type PreviousTranscript = Pick<TranscriptRecord, 'segments' | 'speakerNames' | 'callSpeakers'>
 
 export interface Job {
 	id: string
@@ -68,6 +72,8 @@ export interface Job {
 	speakerNames?: SpeakerNames
 	/** Who the call app showed talking during the recording; names speakers after transcription. */
 	callSpeakers?: CallSpeakerTurn[]
+	/** The transcript this job redoes, whose speaker names move onto the new speakers when it finishes. */
+	previous?: PreviousTranscript
 	/** What auto-export did with this transcript, when it ran. */
 	exported?: AutoExportResult
 }
@@ -340,6 +346,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 				segments,
 				language: current.modelOptions.lang,
 				modelPath: current.modelPath,
+				speakerNames: job.speakerNames,
+				callSpeakers: job.callSpeakers,
 			}).then((saved) => {
 				if (!saved) return
 				// Vibe-owned staging media may be gone now; switch playback to the durable project copy
@@ -434,7 +442,9 @@ export function useTranscribeQueue(): TranscribeQueue {
 					// A recorded call knows who was talking when: give each sentence that person.
 					const fromCall = next.callSpeakers && speakersFromCall(result.segments, next.callSpeakers)
 					const segments = fromCall ? fromCall.segments : result.segments
-					const speakerNames = fromCall ? fromCall.speakerNames : next.speakerNames
+					// Re-transcribed: names the user gave before win over the call's.
+					const carried = next.previous?.speakerNames && carrySpeakerNames(next.previous.segments, next.previous.speakerNames, segments)
+					const speakerNames = carried ? { ...fromCall?.speakerNames, ...carried } : fromCall ? fromCall.speakerNames : next.speakerNames
 					patch(next.id, { status: 'done', progress: 100, segments, seconds, speakerNames })
 					completedAny = true
 					runDone += 1
@@ -450,7 +460,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 							notifyTranscriptsChanged()
 						})
 					} else {
-						persist(next, segments)
+						persist({ ...next, speakerNames }, segments)
 					}
 					if (!abortCurrentRef.current && !abortAllRef.current) void autoExportJob({ ...next, speakerNames }, segments)
 					// An abort resolves as a success carrying the partial segments, so only these flags tell them apart.
@@ -595,6 +605,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 				status: 'queued',
 				progress: 0,
 				segments: [],
+				previous: file.previous,
+				callSpeakers: file.previous?.callSpeakers,
 			}))
 			commit([...jobsRef.current, ...created])
 			if (!selectedIdRef.current) select(created[0].id)

@@ -81,3 +81,27 @@ export function speakersFromCall(segments: Segment[], turns: CallSpeakerTurn[]):
 	})
 	return { segments: named, speakerNames }
 }
+
+/**
+ * Names from an earlier transcript of the same audio, moved onto the speakers of a new one: each new
+ * speaker takes the name of the earlier speaker who said most of its lines, when that one had a name.
+ */
+export function carrySpeakerNames(before: Segment[], names: SpeakerNames, after: Segment[]): SpeakerNames {
+	// Unnamed earlier speakers count too (as ''), so they can outvote a name instead of handing it out.
+	const turns = before.flatMap((segment) =>
+		segment.speaker == null ? [] : [{ start: segment.start / 100, end: segment.stop / 100, name: names[segment.speaker]?.trim() ?? '' }],
+	)
+	const bySpeaker = new Map<number, Map<string, number>>()
+	for (const segment of after) {
+		if (segment.speaker == null) continue
+		const total = bySpeaker.get(segment.speaker) ?? new Map<string, number>()
+		for (const [name, seconds] of overlapByName(segment, turns)) total.set(name, (total.get(name) ?? 0) + seconds)
+		bySpeaker.set(segment.speaker, total)
+	}
+	const carried: SpeakerNames = {}
+	for (const [speaker, byName] of bySpeaker) {
+		const name = majority(byName)
+		if (name) carried[speaker] = name
+	}
+	return carried
+}

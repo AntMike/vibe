@@ -83,6 +83,7 @@ export interface SaveTranscriptInput {
 	language?: string
 	modelPath?: string | null
 	createdAt?: Date
+	speakerNames?: SpeakerNames
 	callSpeakers?: CallSpeakerTurn[]
 }
 
@@ -285,6 +286,7 @@ export async function saveTranscript(input: SaveTranscriptInput): Promise<SaveTr
 			language: input.language,
 			modelPath: input.modelPath ?? null,
 			segments: input.segments,
+			...(input.speakerNames && Object.keys(input.speakerNames).length ? { speakerNames: input.speakerNames } : {}),
 			...(input.callSpeakers?.length ? { callSpeakers: input.callSpeakers } : {}),
 		}
 
