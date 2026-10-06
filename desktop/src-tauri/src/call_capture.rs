@@ -364,6 +364,8 @@ mod teams {
 mod slack {
     use super::MIC_MUTED;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
     use std::time::{Duration, Instant};
     use windows::core::BSTR;
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
@@ -458,6 +460,10 @@ mod slack {
             .to_string()
     }
 
+    /// Tiles handed from the scan thread to the sampler. UI Automation client objects are free-threaded.
+    struct Tiles(Vec<IUIAutomationElement>);
+    unsafe impl Send for Tiles {}
+
     /// Call `on_sample` with the names Slack shows talking, about four times a second, until stopped.
     ///
     /// Each participant is a `p-huddle_peer_tile`; the one talking has a child whose class includes
@@ -466,13 +472,17 @@ mod slack {
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
         let uia: IUIAutomation = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)? };
         let walker = unsafe { uia.RawViewWalker()? };
+        // Searching Slack's window for tiles takes seconds in a long huddle. Inline, it held up
+        // sampling, so turns came out ~17 s coarse and short replies went to the previous speaker.
+        let (send, found) = mpsc::channel();
+        thread::Builder::new()
+            .name("slack-tile-scan".into())
+            .spawn(move || scan_tiles(pid, send))
+            .ok();
         let mut tiles = Vec::new();
-        let mut found_at: Option<Instant> = None;
         while !stop.load(Ordering::Relaxed) {
-            // People join and leave: look for tiles again every few seconds.
-            if found_at.is_none_or(|at| at.elapsed() > Duration::from_secs(3)) {
-                tiles = find_tiles(&uia, pid).unwrap_or_default();
-                found_at = Some(Instant::now());
+            if let Some(Tiles(latest)) = found.try_iter().last() {
+                tiles = latest;
             }
             let speaking: Vec<String> = tiles
                 .iter()
@@ -485,6 +495,30 @@ mod slack {
             std::thread::sleep(Duration::from_millis(250));
         }
         Ok(())
+    }
+
+    /// Look for tiles every few seconds, as people join and leave, until the sampler hangs up.
+    fn scan_tiles(pid: u32, send: mpsc::Sender<Tiles>) {
+        let scan = || -> windows::core::Result<()> {
+            unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
+            let uia: IUIAutomation = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)? };
+            let mut count = None;
+            loop {
+                let started = Instant::now();
+                let tiles = find_tiles(&uia, pid).unwrap_or_default();
+                if count != Some(tiles.len()) {
+                    count = Some(tiles.len());
+                    tracing::debug!("slack huddle tiles: {} (search took {:?})", tiles.len(), started.elapsed());
+                }
+                if send.send(Tiles(tiles)).is_err() {
+                    return Ok(());
+                }
+                thread::sleep(Duration::from_secs(3));
+            }
+        };
+        if let Err(error) = scan() {
+            tracing::error!("slack tile scan failed: {error}");
+        }
     }
 
     fn find_tiles(uia: &IUIAutomation, pid: u32) -> windows::core::Result<Vec<IUIAutomationElement>> {
