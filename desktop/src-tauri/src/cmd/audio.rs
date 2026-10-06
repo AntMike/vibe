@@ -257,7 +257,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
     }
 
     let app_handle_clone = app_handle.clone();
-    app_handle.once("stop_record", move |_event| {
+    let finish = move || {
         for (i, stream_handle) in stream_handles.iter().enumerate() {
             let stream_handle = stream_handle.lock().map_err(|e| eyre!("{:?}", e)).log_error();
             if let Some(mut stream_handle) = stream_handle {
@@ -277,7 +277,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
 
         #[cfg(windows)]
         if let Some(watch) = mute_watch {
-            watch.stop();
+            watch.cancel();
         }
         #[cfg(windows)]
         let speakers = json!(speaker_watch.and_then(|watch| watch.stop()).unwrap_or_default());
@@ -366,6 +366,20 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
             .map_err(|e| eyre!("{e:?}"))
             .log_error();
         crate::meeting_prompt::recording_stopped(&app_handle_clone);
+    };
+
+    // Stop arrives once per click, shortcut or meeting prompt; only the first finishes the
+    // recording. Tauri holds its event lock while a listener runs and replays stops queued
+    // meanwhile, so finishing inline froze the stop for seconds and made a `once` listener run
+    // twice, which panics. Finish on a thread instead.
+    let finish = Mutex::new(Some(finish));
+    let listener = app_handle.clone();
+    app_handle.listen("stop_record", move |event| {
+        let Some(finish) = finish.lock().ok().and_then(|mut finish| finish.take()) else {
+            return;
+        };
+        listener.unlisten(event.id());
+        std::thread::spawn(finish);
     });
 
     crate::meeting_prompt::recording_started(&app_handle);

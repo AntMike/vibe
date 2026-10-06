@@ -141,6 +141,11 @@ impl<T: Send + 'static> Worker<T> {
         self.stop.store(true, Ordering::Relaxed);
         self.thread.take().and_then(|thread| thread.join().ok())
     }
+
+    /// Ask the thread to stop without waiting: a Slack UI search in progress can take seconds.
+    pub fn cancel(self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Capture the app's process tree as 48 kHz stereo f32. `on_samples` gets interleaved samples.

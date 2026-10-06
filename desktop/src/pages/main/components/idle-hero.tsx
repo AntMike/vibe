@@ -104,6 +104,9 @@ function Segment({ active, label, onClick, children }: { active?: boolean; label
 
 function RecordPanel() {
 	const { recording, recordElapsed, preference } = useSession()
+	// Saving a long recording takes a few seconds; show it, and don't take more stop clicks.
+	const [stopping, setStopping] = useState(false)
+	useEffect(() => setStopping(false), [recording.isRecording])
 
 	useEffect(() => {
 		// The recording hook loads audio devices for this tab only.
@@ -117,8 +120,14 @@ function RecordPanel() {
 					<LevelMeter />
 					<span className="font-mono text-2xl tracking-tight tabular-nums">{formatElapsed(recordElapsed)}</span>
 				</div>
-				<Button onClick={() => recording.stopRecord()} className="h-10 w-full rounded-xl">
-					<Square className="h-3.5 w-3.5 fill-current" />
+				<Button
+					disabled={stopping}
+					onClick={() => {
+						setStopping(true)
+						void recording.stopRecord()
+					}}
+					className="h-10 w-full rounded-xl">
+					{stopping ? <Spinner className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5 fill-current" />}
 					{m.stopRecording()}
 				</Button>
 			</div>
