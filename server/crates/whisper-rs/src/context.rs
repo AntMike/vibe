@@ -206,9 +206,18 @@ fn transcribe_windows(
                 params.n_threads,
                 &params.languages,
             )?;
+            let secs = (window.end_sample - window.start_sample) as f32 / SAMPLE_RATE as f32;
+            tracing::debug!(
+                start = window.start_sample as f32 / SAMPLE_RATE as f32,
+                secs,
+                group = window.group,
+                lang = Whisper::lang_str(lang),
+                prob,
+                "window language"
+            );
             detections.push(Detection {
                 group: window.group,
-                secs: (window.end_sample - window.start_sample) as f32 / SAMPLE_RATE as f32,
+                secs,
                 lang,
                 prob,
             });
@@ -287,20 +296,41 @@ fn resolve_languages(detections: &[Detection]) -> Vec<i32> {
         *overall.entry(detection.lang).or_default() += detection.secs;
     }
     let longest = |totals: &BTreeMap<i32, f32>| totals.iter().max_by(|a, b| a.1.total_cmp(b.1)).map(|(lang, _)| *lang);
+    let family_pick = |lang: i32| {
+        let family = CONFUSED_FAMILIES
+            .iter()
+            .find(|family| Whisper::lang_str(lang).is_some_and(|name| family.contains(&name)))?;
+        let in_family: BTreeMap<i32, f32> = overall
+            .iter()
+            .filter(|(lang, _)| Whisper::lang_str(**lang).is_some_and(|name| family.contains(&name)))
+            .map(|(lang, secs)| (*lang, *secs))
+            .collect();
+        longest(&in_family)
+    };
     detections
         .iter()
         .map(|detection| {
-            if confident(detection) {
-                return detection.lang;
-            }
-            by_group
-                .get(&detection.group)
-                .and_then(longest)
-                .or_else(|| longest(&overall))
-                .unwrap_or(detection.lang)
+            let lang = if confident(detection) {
+                detection.lang
+            } else {
+                by_group
+                    .get(&detection.group)
+                    .and_then(longest)
+                    .or_else(|| longest(&overall))
+                    .unwrap_or(detection.lang)
+            };
+            family_pick(lang).unwrap_or(lang)
         })
         .collect()
 }
+
+/// Languages Whisper cannot tell apart turn by turn: it labels Ukrainian turns
+/// Russian at 0.99 confidence, so neither length nor probability separates a
+/// real switch from a misdetection. A recording settles on whichever member of
+/// the family it speaks most and decodes every such turn in it.
+/// ponytail: one family per recording, so a lone Russian speaker in a Ukrainian
+/// call is decoded as Ukrainian; split per speaker if that ever matters.
+const CONFUSED_FAMILIES: &[&[&str]] = &[&["uk", "ru", "be"]];
 
 /// Maps the historical `TranscribeOptions` onto the engine's `FullParams`,
 /// mirroring the previous `full_params` over `whisper_full_default_params`.
@@ -477,6 +507,22 @@ mod tests {
         ]);
         assert_eq!(langs, vec![en, uk, uk, uk, en, uk]);
         assert_eq!(resolve_languages(&[detection(0, 0.5, de, 0.2)]), vec![de]);
+    }
+
+    #[test]
+    fn confusable_languages_follow_the_recording() {
+        let id = |name| crate::lang::lang_id(name).unwrap() as i32;
+        let (en, uk, ru) = (id("en"), id("uk"), id("ru"));
+        let detection = |group, secs, lang, prob| Detection { group, secs, lang, prob };
+        let langs = resolve_languages(&[
+            detection(0, 70.0, uk, 0.9),
+            detection(1, 5.9, ru, 0.99), // confident, but uk/ru is not trusted per turn
+            detection(1, 20.0, en, 0.9), // English is told apart reliably: kept
+            detection(2, 18.0, ru, 0.95),
+        ]);
+        assert_eq!(langs, vec![uk, uk, en, uk]);
+        // A Russian recording stays Russian.
+        assert_eq!(resolve_languages(&[detection(0, 30.0, ru, 0.9), detection(0, 3.0, uk, 0.8)]), vec![ru, ru]);
     }
 
     #[test]
