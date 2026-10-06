@@ -30,10 +30,14 @@ pub fn diarize(model_path: &str, _samples: &[f32]) -> Vec<Segment> {
 const MIN_CUT_SEARCH_SECS: f64 = 0.25;
 /// Frame (samples, 20 ms at 16 kHz) whose energy picks the quietest cut.
 const CUT_FRAME: usize = 320;
+/// A turn inside another speaker's gets its own chunk from this long (seconds): a short reply
+/// over someone, rather than an "mm-hm" that would only cut their sentence in two.
+// ponytail: calibration knob; lower it if short replies still land on the other speaker.
+const MIN_NESTED_SECS: f64 = 0.7;
 
 /// Speaker turns as chunks that tile the whole recording, to transcribe one at
-/// a time. A speaker's consecutive turns merge and a turn nested in another
-/// speaker's is left to that one. Each speaker change is cut at the quietest
+/// a time. A speaker's consecutive turns merge. A turn nested in another
+/// speaker's splits it in three when long enough, else is left to that one. Each speaker change is cut at the quietest
 /// moment between the two turns, and the first and last chunks reach the ends
 /// of the audio: the diarizer misses speech (seconds of it, at times), and
 /// audio outside every chunk would never be transcribed.
@@ -44,6 +48,21 @@ pub fn speaker_chunks(turns: &[Segment], samples: &[f32]) -> Vec<Segment> {
     for turn in sorted {
         if let Some(last) = chunks.last_mut() {
             if turn.end <= last.end {
+                let long_enough = |secs: f64| secs >= MIN_NESTED_SECS;
+                if turn.speaker_id != last.speaker_id
+                    && long_enough(turn.end - turn.start)
+                    && long_enough(turn.start - last.start)
+                {
+                    let rest = Segment {
+                        start: turn.end,
+                        ..last.clone()
+                    };
+                    last.end = turn.start;
+                    chunks.push(turn);
+                    if long_enough(rest.end - rest.start) {
+                        chunks.push(rest);
+                    }
+                }
                 continue;
             }
             if turn.speaker_id == last.speaker_id {
@@ -131,5 +150,12 @@ mod tests {
         );
         assert_eq!(spans(&chunks), vec![(0.0, 10.39, 0), (10.39, 16.01, 1), (16.01, 26.0, 0)]);
         assert!(speaker_chunks(&[], &samples).is_empty());
+    }
+
+    #[test]
+    fn a_reply_inside_another_turn_gets_its_own_chunk() {
+        let samples = audio(20.0, &[(4.9, 5.0), (6.0, 6.1)]);
+        let chunks = speaker_chunks(&[turn(0.0, 20.0, 0), turn(5.0, 6.0, 1)], &samples);
+        assert_eq!(spans(&chunks), vec![(0.0, 4.92, 0), (4.92, 6.02, 1), (6.02, 20.0, 0)]);
     }
 }
