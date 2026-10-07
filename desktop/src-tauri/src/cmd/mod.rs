@@ -1,4 +1,5 @@
 use serde::Serialize;
+pub mod ai_cli;
 pub mod app;
 pub mod audio;
 pub mod config;

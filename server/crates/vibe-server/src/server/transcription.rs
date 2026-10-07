@@ -121,6 +121,7 @@ pub(super) fn build_options(
         translate: values.bool("translate"),
         threads: values.i32("n_threads"),
         prompt: values.string("prompt"),
+        carry_prompt: values.bool("carry_prompt"),
         verbose,
         temperature: values.f32("temperature"),
         max_text_ctx: values.i32("max_text_ctx"),

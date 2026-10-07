@@ -375,6 +375,7 @@ fn full_params(options: &TranscribeOptions) -> FullParams {
     params.language = options.language.clone();
     params.languages = options.languages.clone();
     params.initial_prompt = options.prompt.clone();
+    params.carry_initial_prompt = options.carry_prompt;
     params
 }
 

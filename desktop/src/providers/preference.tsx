@@ -3,6 +3,7 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { load } from '@tauri-apps/plugin-store'
 import * as config from '~/lib/config'
 import { DEFAULT_AUTO_EXPORT, type AutoExportSettings } from '~/lib/auto-export'
+import { DEFAULT_HINTS, type HintsSettings } from '~/lib/hints'
 import { CONFIG_KEYS } from '~/lib/config-keys'
 import { KEEP_AWAKE, startKeepAwake, stopKeepAwake } from '~/lib/keep-awake'
 import { usePersisted } from '~/lib/config-store'
@@ -112,6 +113,8 @@ export interface Preference {
 	setExportOptions: ModifyState<ExportOptions>
 	autoExport: AutoExportSettings
 	setAutoExport: ModifyState<AutoExportSettings>
+	hints: HintsSettings
+	setHints: (hints: HintsSettings) => void
 
 	gpuDevice: number | null
 	setGpuDevice: ModifyState<number | null>
@@ -224,6 +227,10 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const [ffmpegOptions, setFfmpegOptions] = usePersisted<FfmpegOptions>(CONFIG_KEYS.ffmpegOptions, defaultOptions.ffmpegOptions)
 	const [projectsPath, setProjectsPath] = usePersisted<string | null>(CONFIG_KEYS.projectsPath, null)
 	const [autoExport, setAutoExport] = usePersisted<AutoExportSettings>(CONFIG_KEYS.autoExport, DEFAULT_AUTO_EXPORT)
+	const [storedHints, setStoredHints] = usePersisted<Partial<HintsSettings>>(CONFIG_KEYS.hints, DEFAULT_HINTS)
+	const setHints = useCallback((next: HintsSettings) => setStoredHints(next), [setStoredHints])
+	// Fields added later fall back to their defaults instead of reading as undefined.
+	const hints = useMemo(() => ({ ...DEFAULT_HINTS, ...storedHints }), [storedHints])
 	// The pre-3.2 `summarize.llm` object is read once when `ai` is missing, so nobody loses a key or a prompt.
 	const [ai, setAi] = usePersisted<AiSettings>(
 		CONFIG_KEYS.ai,
@@ -440,6 +447,8 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setYtDlpDeclinedVersion,
 		autoExport,
 		setAutoExport,
+		hints,
+		setHints,
 		advancedTranscribeOptions,
 		setAdvancedTranscribeOptions,
 		recentLanguages,

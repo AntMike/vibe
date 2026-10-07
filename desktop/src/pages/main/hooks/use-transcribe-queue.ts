@@ -16,6 +16,7 @@ import { autoProjectName } from '~/lib/project-name'
 import { gpuOutOfMemoryBefore, rememberGpuOutOfMemory } from '~/lib/gpu-memory'
 import { fatalRunError, isGpuOutOfMemory, isUserError, serverErrorCodes } from '~/lib/server-errors'
 import { carrySpeakerNames, speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
+import { hintOptions } from './transcribe-hints'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
 	notifyTranscriptsChanged,
@@ -227,6 +228,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 	const [isAborting, setIsAborting] = useState(false)
 	const abortCurrentRef = useRef(false)
 	const abortAllRef = useRef(false)
+	/** True while a draft pass runs for recognition hints; its lines are not the job's transcript. */
+	const draftingRef = useRef(false)
 	const projectOperationsRef = useRef(new Map<string, Promise<unknown>>())
 
 	useEffect(() => {
@@ -280,7 +283,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 		unlisteners.push(
 			listen<Segment>('new_segment', ({ payload }) => {
 				const id = activeIdRef.current
-				if (!id) return
+				if (!id || draftingRef.current) return
 				commit(jobsRef.current.map((job) => (job.id === id ? { ...job, segments: [...job.segments, payload] } : job)))
 			}),
 		)
@@ -431,11 +434,39 @@ export function useTranscribeQueue(): TranscribeQueue {
 				const startedAt = performance.now()
 				trackTranscribeStarted('main', next.path)
 				try {
+					const options = preferenceRef.current
+					let hints: Awaited<ReturnType<typeof hintOptions>> = null
+					if (options.hints.enabled && options.modelMetadata?.capabilities.text_prompts !== false) {
+						draftingRef.current = true
+						try {
+							hints = await hintOptions(next.path, next.callSpeakers, {
+								settings: options.hints,
+								connection: options.ai.connection,
+								userPrompt: options.modelOptions.init_prompt,
+								mainModelPath: current.modelPath,
+								loadModel: async (modelPath) => {
+									await invoke('load_model', {
+										modelPath,
+										gpuDevice: current.gpuDevice,
+										noGpu: onCpu,
+										unloadTimeoutMinutes: current.unloadTimeoutMinutes,
+									})
+								},
+								isAborted: () => abortCurrentRef.current || abortAllRef.current,
+								onWarning: (message) => toast.warning(m.hintsFailed({ message }), { position: 'bottom-center', duration: 8000 }),
+							})
+						} finally {
+							draftingRef.current = false
+						}
+						// Cancelled during the draft: the catch below marks the job cancelled.
+						if (abortCurrentRef.current || abortAllRef.current) throw new Error('cancelled')
+					}
 					const result = await invoke<Transcript>('transcribe', {
 						options: {
 							path: next.path,
-							...withoutUnsupportedOptions(preferenceRef.current.modelOptions, preferenceRef.current.modelMetadata?.capabilities),
+							...withoutUnsupportedOptions(options.modelOptions, options.modelMetadata?.capabilities),
 							...shared,
+							...hints,
 						},
 					})
 					const seconds = Math.round((performance.now() - startedAt) / 1000)

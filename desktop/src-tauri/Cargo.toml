@@ -39,7 +39,7 @@ keepawake = "0.6.1"
 serde_json = { workspace = true }
 eyre = { workspace = true }
 
-tokio = { version = "1.49.0", features = ["net", "fs", "macros", "rt-multi-thread"] }
+tokio = { version = "1.49.0", features = ["net", "fs", "macros", "rt-multi-thread", "process", "io-util", "time"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
 bytes = "1"
 # Verify downloaded models against the catalog hash

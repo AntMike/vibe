@@ -252,6 +252,9 @@ impl ServerProcess {
                 form = form.text("prompt", prompt.clone());
             }
         }
+        if options.carry_prompt.unwrap_or(false) {
+            form = form.text("carry_prompt", "true");
+        }
         for (name, value) in [
             ("n_threads", options.n_threads),
             ("max_text_ctx", options.max_text_ctx),

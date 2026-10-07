@@ -40,6 +40,8 @@ export const CONFIG_KEYS = {
 	projectsPath: 'transcription.projectsPath',
 	/** Export every finished transcript automatically: formats, destination, replace rule. */
 	autoExport: 'transcription.autoExport',
+	/** Glossary prompt for Whisper from call names and a draft pass; see `lib/hints`. */
+	hints: 'transcription.recognitionHints',
 
 	// Recording
 	inputDeviceId: 'recording.inputDeviceId',

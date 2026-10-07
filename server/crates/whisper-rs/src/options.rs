@@ -22,6 +22,9 @@ pub struct TranscribeOptions {
     pub translate: bool,
     pub threads: i32,
     pub prompt: Option<String>,
+    /// Repeat `prompt` before every 30-second window instead of only the first,
+    /// so a glossary keeps steering the spelling through the whole file.
+    pub carry_prompt: bool,
     pub verbose: bool,
     pub temperature: f32,
     pub max_text_ctx: i32,
@@ -57,6 +60,7 @@ impl Default for TranscribeOptions {
             translate: false,
             threads: 0,
             prompt: None,
+            carry_prompt: false,
             verbose: false,
             temperature: 0.0,
             max_text_ctx: 0,

@@ -38,6 +38,8 @@ pub struct TranscribeOptions {
     pub verbose: Option<bool>,
     pub n_threads: Option<i32>,
     pub init_prompt: Option<String>,
+    /// Repeat `init_prompt` before every window, for a glossary.
+    pub carry_prompt: Option<bool>,
     pub temperature: Option<f32>,
     pub translate: Option<bool>,
     pub max_text_ctx: Option<i32>,

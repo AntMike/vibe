@@ -109,12 +109,16 @@ async function failure(label: string, response: Response) {
 }
 
 class Ollama implements AiClient {
-	constructor(private connection: AiConnection) {}
+	constructor(
+		private connection: AiConnection,
+		private unloadAfter = false,
+	) {}
 	private body(prompt: string, stream: boolean) {
 		return JSON.stringify({
 			model: this.connection.model,
 			prompt,
 			stream,
+			...(this.unloadAfter ? { keep_alive: 0 } : {}),
 			options: { num_ctx: this.connection.contextTokens, num_predict: outputTokens(this.connection.contextTokens) },
 		})
 	}
@@ -239,8 +243,9 @@ class Claude implements AiClient {
 	}
 }
 
-export function createClient(connection: AiConnection): AiClient {
-	if (connection.platform === 'ollama') return new Ollama(connection)
+/** `unloadAfter` frees a local model's memory as soon as it answers, for when a speech model needs it next. */
+export function createClient(connection: AiConnection, { unloadAfter = false } = {}): AiClient {
+	if (connection.platform === 'ollama') return new Ollama(connection, unloadAfter)
 	if (connection.platform === 'openai') return new OpenAICompatible(connection)
 	return new Claude(connection)
 }

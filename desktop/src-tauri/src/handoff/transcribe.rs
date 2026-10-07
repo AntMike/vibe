@@ -187,6 +187,7 @@ impl HandoffHandler {
             verbose: None,
             n_threads: None,
             init_prompt: None,
+            carry_prompt: None,
             temperature: None,
             // Passed straight through; whether it is meaningful is the phone's
             // call, made against the `translation` flag we reported.
