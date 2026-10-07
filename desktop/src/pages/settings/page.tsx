@@ -4,6 +4,7 @@ import { m } from '~/paraglide/messages.js'
 import {
 	ArrowLeft,
 	ArrowUpRight,
+	Bell,
 	Bot,
 	Cpu,
 	Globe,
@@ -29,6 +30,7 @@ import { ApiSection } from './sections/api'
 import { DictationSection } from './sections/dictation'
 import { GeneralSection } from './sections/general'
 import { ModelsSection } from './sections/models'
+import { NotificationsSection } from './sections/notifications'
 import { PhoneSection } from './sections/phone'
 import { PrivacySection } from './sections/privacy'
 import { RecordingSection } from './sections/recording'
@@ -43,7 +45,19 @@ interface SettingsPageProps {
 	scrollTo?: string
 }
 
-type SectionId = 'general' | 'transcription' | 'models' | 'ai' | 'tuning' | 'recording' | 'dictation' | 'phone' | 'api' | 'privacy' | 'advanced'
+type SectionId =
+	| 'general'
+	| 'transcription'
+	| 'models'
+	| 'ai'
+	| 'tuning'
+	| 'recording'
+	| 'notifications'
+	| 'dictation'
+	| 'phone'
+	| 'api'
+	| 'privacy'
+	| 'advanced'
 
 type Subpage = 'auto-export' | 'ai-summary' | 'ai-dictation' | 'whisper-options' | 'phone-pairing'
 
@@ -71,6 +85,7 @@ export default function SettingsPage({ setVisible, scrollTo }: SettingsPageProps
 		],
 		[
 			{ id: 'recording', label: m.recordingSettings(), icon: <Mic className="h-4 w-4" /> },
+			{ id: 'notifications', label: m.notifications(), icon: <Bell className="h-4 w-4" /> },
 			{ id: 'dictation', label: m.navDictation(), icon: <Keyboard className="h-4 w-4" /> },
 			{ id: 'ai', label: m.aiSection(), icon: <Sparkles className="h-4 w-4" /> },
 			{ id: 'phone', label: m.phone(), icon: <Smartphone className="h-4 w-4" /> },
@@ -230,6 +245,8 @@ export default function SettingsPage({ setVisible, scrollTo }: SettingsPageProps
 							{!subpage && activeSection === 'tuning' && <TuningSection vm={vm} onOpenWhisper={() => openSubpage('whisper-options')} />}
 
 							{!subpage && activeSection === 'recording' && <RecordingSection />}
+
+							{!subpage && activeSection === 'notifications' && <NotificationsSection />}
 
 							{!subpage && activeSection === 'dictation' && <DictationSection vm={vm} onOpenCleanup={() => openSubpage('ai-dictation')} />}
 

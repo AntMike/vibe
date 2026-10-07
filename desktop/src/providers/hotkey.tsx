@@ -8,7 +8,7 @@ import { trackTranscribeFailed, trackTranscribeStarted, trackTranscribeSucceeded
 import { AudioDevice } from '~/lib/audio'
 import { CONFIG_KEYS } from '~/lib/config-keys'
 import { gpuOutOfMemoryBefore } from '~/lib/gpu-memory'
-import { usePersisted } from '~/lib/config-store'
+import { readConfig, usePersisted } from '~/lib/config-store'
 import { createClient, fillPrompt } from '~/lib/ai'
 import { withoutUnsupportedOptions } from '~/lib/model'
 import { isUserError } from '~/lib/server-errors'
@@ -222,7 +222,7 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
 					await invoke('type_text', { text: resultText })
 				} else {
 					await clipboard.writeText(resultText)
-					await notify('Vibe', m.hotkeyTranscriptionCopied())
+					if (readConfig(CONFIG_KEYS.notificationsDictation, true)) await notify('Vibe', m.hotkeyTranscriptionCopied())
 				}
 				finishIndicator('completed', { output: hotkeyOutputModeRef.current })
 			} catch (error) {

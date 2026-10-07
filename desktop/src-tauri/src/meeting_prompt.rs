@@ -133,6 +133,8 @@ struct RuntimeInner {
     logic: PromptLogic,
     /// Vibe started the current recording for a meeting, so the meeting ending stops it.
     auto_recording: bool,
+    /// Counts popups shown, so a timer only hides the one it was started for.
+    shown: u64,
     worker: Option<Worker>,
 }
 
@@ -278,13 +280,80 @@ fn show_state(app: &tauri::AppHandle, state: MeetingPromptPayload) -> Result<(),
         return Ok(());
     }
     tracing::debug!(source = ?state.source, "showing meeting prompt");
+    present(app, state)
+}
+
+/// The meeting alert in the style chosen under Notifications: Vibe's popup, or a Windows notification.
+fn present(app: &tauri::AppHandle, state: MeetingPromptPayload) -> Result<(), String> {
+    #[cfg(windows)]
+    if crate::notifications::meeting_uses_system(app) {
+        crate::notifications::show_meeting_toast(app, state.source, toast_action);
+        return Ok(());
+    }
     let window = match app.get_webview_window(WINDOW_LABEL) {
         Some(window) => window,
         None => create_window(app)?,
     };
     position_window(app, &window)?;
     show_window_without_focus(app, &window)?;
-    window.emit(EVENT_NAME, state).map_err(|error| error.to_string())
+    window.emit(EVENT_NAME, state).map_err(|error| error.to_string())?;
+    hide_after(app, crate::notifications::meeting_seconds(app));
+    Ok(())
+}
+
+/// Hide the popup after `seconds` (0: never), as if dismissed, unless another one was shown since.
+fn hide_after(app: &tauri::AppHandle, seconds: u64) {
+    let Some(runtime) = app.try_state::<MeetingPromptRuntime>() else {
+        return;
+    };
+    let generation = match runtime.inner.lock() {
+        Ok(mut inner) => {
+            inner.shown += 1;
+            inner.shown
+        }
+        Err(_) => return,
+    };
+    if seconds == 0 {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(seconds));
+        let runtime = app.state::<MeetingPromptRuntime>();
+        let expired = runtime.inner.lock().map(|inner| inner.shown == generation).unwrap_or(false);
+        if expired {
+            let _ = dismiss_meeting_prompt(app.clone());
+        }
+    });
+}
+
+/// A button on the Windows notification, or a click on the notification itself.
+#[cfg(windows)]
+fn toast_action(app: &tauri::AppHandle, action: Option<String>) {
+    match action.as_deref() {
+        // Only while the call is still on: an old notification clicked later records nothing.
+        Some("record") => {
+            if get_meeting_prompt_state(app.clone()).ok().flatten().is_some() {
+                app.emit_to(
+                    "main",
+                    "meeting-prompt-start-recording",
+                    serde_json::json!({ "microphone": true, "systemAudio": true }),
+                )
+                .map_err(|error| tracing::error!("{error}"))
+                .ok();
+            }
+        }
+        Some("dismiss") => {
+            let _ = dismiss_meeting_prompt(app.clone());
+        }
+        _ => crate::tray::show_main_window(app),
+    }
+}
+
+/// Show the meeting alert as configured, for a call that isn't happening, from the settings page.
+#[tauri::command]
+pub fn test_meeting_notification(app: tauri::AppHandle) -> Result<(), String> {
+    present(&app, MeetingPromptPayload { source: Source::Zoom })
 }
 
 fn apply_detection(app: &tauri::AppHandle, state: MeetingState) {
@@ -303,6 +372,7 @@ fn apply_detection(app: &tauri::AppHandle, state: MeetingState) {
     if meeting_ended {
         tracing::debug!("meeting ended, stopping its recording");
         app.emit("stop_record", ()).map_err(|error| tracing::error!("{error}")).ok();
+        crate::notifications::auto_record_notice(app, false, None);
     }
     if !changed {
         return;
@@ -323,6 +393,7 @@ fn apply_detection(app: &tauri::AppHandle, state: MeetingState) {
             )
             .map_err(|error| tracing::error!("{error}"))
             .ok();
+            crate::notifications::auto_record_notice(app, true, Some(state.source));
         }
         Some(state) => {
             if let Err(error) = show_state(app, state) {
@@ -438,9 +509,9 @@ pub fn dismiss_meeting_prompt(app: tauri::AppHandle) -> Result<(), String> {
     let runtime = app
         .try_state::<MeetingPromptRuntime>()
         .ok_or_else(|| "meeting prompt runtime is not initialized".to_string())?;
-    if runtime.inner.lock().map_err(|error| error.to_string())?.logic.dismiss() {
-        hide_window(&app);
-    }
+    runtime.inner.lock().map_err(|error| error.to_string())?.logic.dismiss();
+    // Hidden even with no meeting on record, which is how a test popup goes away.
+    hide_window(&app);
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { getTextDirection } from '~/paraglide/runtime.js'
 import { useTray } from '~/lib/tray'
+import { useNotificationLabels } from '~/lib/notification-labels'
 import { Route, Routes } from 'react-router-dom'
 import UpdateProgress from '~/components/updater-progress'
 import '~/globals.css'
@@ -35,6 +36,7 @@ function AppContent() {
 	const { displayLanguage, closeToTray, meetingDetectionEnabled } = usePreferenceProvider()
 	const dir = getTextDirection(displayLanguage)
 	useTray(closeToTray, displayLanguage)
+	useNotificationLabels(displayLanguage)
 
 	useEffect(() => {
 		document.body.dir = dir

@@ -53,6 +53,17 @@ export const CONFIG_KEYS = {
 	autoRecordMeetings: 'recording.autoRecordMeetings',
 	autoTranscribeAfterRecording: 'recording.autoTranscribeAfterRecording',
 
+	// Notifications — the meeting ones are read by notifications.rs too.
+	/** `popup` (Vibe's window) or `system` (a Windows notification). */
+	notificationsMeetingStyle: 'notifications.meetingStyle',
+	/** Seconds the meeting alert stays up; 0 until dismissed or the call ends. */
+	notificationsMeetingSeconds: 'notifications.meetingSeconds',
+	notificationsMeetingSound: 'notifications.meetingSound',
+	/** Say so when a call starts or stops being recorded without asking. */
+	notificationsAutoRecord: 'notifications.autoRecord',
+	/** Say so when dictated text was copied to the clipboard. */
+	notificationsDictation: 'notifications.dictation',
+
 	// Reading the transcript
 	textAreaDirection: 'transcript.textDirection',
 	textSize: 'transcript.textSize',

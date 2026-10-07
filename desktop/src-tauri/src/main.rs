@@ -15,6 +15,7 @@ mod handoff;
 mod keepawake;
 mod logging;
 mod meeting_prompt;
+mod notifications;
 mod server;
 mod setup;
 mod transcript;
@@ -173,7 +174,9 @@ async fn main() -> Result<()> {
             meeting_prompt::set_meeting_detection_enabled,
             meeting_prompt::get_meeting_prompt_state,
             meeting_prompt::dismiss_meeting_prompt,
-            meeting_prompt::meeting_prompt_ready
+            meeting_prompt::meeting_prompt_ready,
+            meeting_prompt::test_meeting_notification,
+            notifications::set_notification_labels
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

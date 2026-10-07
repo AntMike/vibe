@@ -75,12 +75,6 @@ export function TranscriptionSection({ vm, onOpenAutoExport }: { vm: SettingsVie
 						<Switch checked={autoExport.enabled} onCheckedChange={(enabled) => vm.preference.setAutoExport({ ...autoExport, enabled })} />
 					</div>
 				</SettingsRow>
-				<SettingsRow label={m.playSoundOnFinish()}>
-					<Switch checked={vm.preference.soundOnFinish} onCheckedChange={vm.preference.setSoundOnFinish} />
-				</SettingsRow>
-				<SettingsRow label={m.focusWindowOnFinish()}>
-					<Switch checked={vm.preference.focusOnFinish} onCheckedChange={vm.preference.setFocusOnFinish} />
-				</SettingsRow>
 			</SettingsGroup>
 
 			<SettingsGroup title={m.projectsFolder()}>

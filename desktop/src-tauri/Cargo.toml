@@ -90,6 +90,8 @@ winreg = "0.55.0"
 wasapi = "0.25"
 sysinfo = "0.37"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+# Meeting notifications with Record/Dismiss buttons; the same version the notification plugin uses
+tauri-winrt-notification = "0.7.2"
 # Used to attach to console
 windows = { version = "0.62.2", features = [
 	"Win32_System_Console",
