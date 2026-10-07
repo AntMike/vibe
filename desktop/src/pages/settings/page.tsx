@@ -37,7 +37,6 @@ import { AiPromptSection } from './sections/ai-prompt'
 import { TranscriptionSection } from './sections/transcription'
 import { TuningSection } from './sections/tuning'
 import { WhisperOptionsSection } from './sections/whisper-options'
-import { AudioProcessingSection } from './sections/audio-processing'
 
 interface SettingsPageProps {
 	setVisible: ModifyState<boolean>
@@ -46,7 +45,7 @@ interface SettingsPageProps {
 
 type SectionId = 'general' | 'transcription' | 'models' | 'ai' | 'tuning' | 'recording' | 'dictation' | 'phone' | 'api' | 'privacy' | 'advanced'
 
-type Subpage = 'auto-export' | 'ai-summary' | 'ai-dictation' | 'whisper-options' | 'audio-processing' | 'phone-pairing'
+type Subpage = 'auto-export' | 'ai-summary' | 'ai-dictation' | 'whisper-options' | 'phone-pairing'
 
 interface SettingsSection {
 	id: SectionId
@@ -86,7 +85,6 @@ export default function SettingsPage({ setVisible, scrollTo }: SettingsPageProps
 	// Pages under a section, each with its own title and a way back; no dialog over the modal.
 	const subpages: Record<Subpage, { section: SectionId; title: string }> = {
 		'whisper-options': { section: 'tuning', title: m.whisperOptions() },
-		'audio-processing': { section: 'tuning', title: m.audioProcessing() },
 		'auto-export': { section: 'transcription', title: m.autoExport() },
 		'phone-pairing': { section: 'phone', title: m.pairAPhone() },
 		'ai-summary': { section: 'ai', title: m.aiSummaryTask() },
@@ -216,7 +214,6 @@ export default function SettingsPage({ setVisible, scrollTo }: SettingsPageProps
 					<div ref={viewportRef} className="overflow-hidden">
 						<div ref={contentRef} className="flow-root">
 							{subpage === 'whisper-options' && <WhisperOptionsSection vm={vm} />}
-							{subpage === 'audio-processing' && <AudioProcessingSection vm={vm} />}
 							{subpage === 'auto-export' && <AutoExportSection vm={vm} />}
 							{subpage === 'ai-summary' && <AiPromptSection vm={vm} task="summary" />}
 							{subpage === 'ai-dictation' && <AiPromptSection vm={vm} task="dictation" />}
@@ -230,13 +227,7 @@ export default function SettingsPage({ setVisible, scrollTo }: SettingsPageProps
 
 							{!subpage && activeSection === 'ai' && <AiSection vm={vm} onOpenPrompt={openPrompt} />}
 
-							{!subpage && activeSection === 'tuning' && (
-								<TuningSection
-									vm={vm}
-									onOpenWhisper={() => openSubpage('whisper-options')}
-									onOpenAudio={() => openSubpage('audio-processing')}
-								/>
-							)}
+							{!subpage && activeSection === 'tuning' && <TuningSection vm={vm} onOpenWhisper={() => openSubpage('whisper-options')} />}
 
 							{!subpage && activeSection === 'recording' && <RecordingSection />}
 

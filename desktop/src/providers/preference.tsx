@@ -87,8 +87,6 @@ export interface Preference {
 
 	ai: AiSettings
 	setAi: ModifyState<AiSettings>
-	ffmpegOptions: FfmpegOptions
-	setFfmpegOptions: ModifyState<FfmpegOptions>
 	resetOptions: () => void
 	enableSubtitlesPreset: () => void
 	ytDlpVersion: string | null
@@ -150,11 +148,6 @@ export function usePreferenceProvider() {
 	return useContext(PreferenceContext) as Preference
 }
 
-export interface FfmpegOptions {
-	normalize_loudness: boolean
-	custom_command: string | null
-}
-
 export interface ModelOptions {
 	lang: string
 	verbose: boolean
@@ -192,10 +185,6 @@ const defaultOptions = {
 	focusOnFinish: true,
 	modelPath: null,
 	modelOptions: DEFAULT_MODEL_OPTIONS,
-	ffmpegOptions: {
-		normalize_loudness: false,
-		custom_command: null,
-	},
 	ytDlpVersion: null,
 	shouldCheckYtDlpVersion: true,
 }
@@ -224,7 +213,6 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const [soundOnFinish, setSoundOnFinish] = usePersisted(CONFIG_KEYS.soundOnFinish, defaultOptions.soundOnFinish)
 	const [focusOnFinish, setFocusOnFinish] = usePersisted(CONFIG_KEYS.focusOnFinish, defaultOptions.focusOnFinish)
 	const [modelOptions, setModelOptions] = usePersisted<ModelOptions>(CONFIG_KEYS.modelOptions, defaultOptions.modelOptions)
-	const [ffmpegOptions, setFfmpegOptions] = usePersisted<FfmpegOptions>(CONFIG_KEYS.ffmpegOptions, defaultOptions.ffmpegOptions)
 	const [projectsPath, setProjectsPath] = usePersisted<string | null>(CONFIG_KEYS.projectsPath, null)
 	const [autoExport, setAutoExport] = usePersisted<AutoExportSettings>(CONFIG_KEYS.autoExport, DEFAULT_AUTO_EXPORT)
 	const [storedHints, setStoredHints] = usePersisted<Partial<HintsSettings>>(CONFIG_KEYS.hints, DEFAULT_HINTS)
@@ -383,7 +371,6 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setSoundOnFinish(defaultOptions.soundOnFinish)
 		setFocusOnFinish(defaultOptions.focusOnFinish)
 		setModelOptions(defaultOptions.modelOptions)
-		setFfmpegOptions(defaultOptions.ffmpegOptions)
 		setProjectsPath(null)
 		setAi(DEFAULT_AI)
 		setMeetingDetectionEnabled(false)
@@ -435,8 +422,6 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setTheme,
 		homeTab,
 		setHomeTab,
-		ffmpegOptions,
-		setFfmpegOptions,
 		ytDlpVersion,
 		setYtDlpVersion,
 		shouldCheckYtDlpVersion,

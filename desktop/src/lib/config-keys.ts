@@ -29,7 +29,6 @@ export const CONFIG_KEYS = {
 
 	// Transcription
 	modelOptions: 'transcription.modelOptions',
-	ffmpegOptions: 'transcription.ffmpegOptions',
 	advancedOptions: 'transcription.advancedOptions',
 	recentLanguages: 'transcription.recentLanguages',
 	diarizeEnabled: 'transcription.recognizeSpeakers',
@@ -113,7 +112,6 @@ export const LEGACY_LOCAL_STORAGE_KEYS: Record<string, ConfigKey> = {
 	prefs_unload_timeout_minutes: CONFIG_KEYS.unloadTimeoutMinutes,
 	'vibe:model-download-prompt-dismissed': CONFIG_KEYS.modelPromptDismissed,
 	prefs_modal_args: CONFIG_KEYS.modelOptions,
-	prefs_ffmpeg_options: CONFIG_KEYS.ffmpegOptions,
 	prefs_advanced_transcribe_options: CONFIG_KEYS.advancedOptions,
 	prefs_recent_languages: CONFIG_KEYS.recentLanguages,
 	prefs_diarize_enabled: CONFIG_KEYS.diarizeEnabled,

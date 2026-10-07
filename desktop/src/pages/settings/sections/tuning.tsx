@@ -1,11 +1,11 @@
-import { ChevronRight, SlidersHorizontal, AudioLines } from 'lucide-react'
+import { ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { DEFAULT_MODEL_OPTIONS } from '~/providers/preference'
 import { m } from '~/paraglide/messages.js'
 import { Switch } from '~/components/ui/switch'
 import { HintsGroup } from './hints'
 import { ActionRow, SettingsGroup, SettingsNote, SettingsRow, type SettingsViewModel } from './shared'
 
-export function TuningSection({ vm, onOpenWhisper, onOpenAudio }: { vm: SettingsViewModel; onOpenWhisper: () => void; onOpenAudio: () => void }) {
+export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; onOpenWhisper: () => void }) {
 	const options = vm.preference.modelOptions
 	const customized =
 		Boolean(options.translate) ||
@@ -39,18 +39,6 @@ export function TuningSection({ vm, onOpenWhisper, onOpenAudio }: { vm: Settings
 					icon={<ChevronRight className="h-4 w-4 rtl:rotate-180" />}
 					activateOnClick
 					onClick={onOpenWhisper}
-				/>
-				<ActionRow
-					label={
-						<span className="flex items-center gap-2">
-							<AudioLines className="h-4 w-4 text-muted-foreground" />
-							{m.audioProcessing()}
-						</span>
-					}
-					description={m.audioProcessingInfo()}
-					icon={<ChevronRight className="h-4 w-4 rtl:rotate-180" />}
-					activateOnClick
-					onClick={onOpenAudio}
 				/>
 			</SettingsGroup>
 		</div>
