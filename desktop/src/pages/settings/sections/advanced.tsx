@@ -8,6 +8,7 @@ import { ReactComponent as FolderIcon } from '~/icons/folder.svg'
 import { ReactComponent as ResetIcon } from '~/icons/reset.svg'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import type { CpuVariant } from '~/providers/preference'
+import { SettingsFileGroup } from './settings-file'
 import { ActionRow, SettingsGroup, SettingsRow, rowControlClass, type SettingsViewModel } from './shared'
 
 export function AdvancedSection({ vm }: { vm: SettingsViewModel }) {
@@ -59,6 +60,8 @@ export function AdvancedSection({ vm }: { vm: SettingsViewModel }) {
 					</Select>
 				</SettingsRow>
 			</SettingsGroup>
+
+			<SettingsFileGroup />
 
 			<SettingsGroup title={m.settingsTroubleshooting()}>
 				<ActionRow label={m.copyLogs()} icon={<CopyIcon className="h-4 w-4" />} onClick={vm.copyLogs} />
