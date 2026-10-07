@@ -3,7 +3,7 @@ import { platform } from '@tauri-apps/plugin-os'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import ShortcutRecorder from '~/components/shortcut-recorder'
-import { MeetingServiceIcons } from '~/components/meeting-service-icons'
+import { GoogleMeetIcon, MeetingServiceIcons, MicrosoftTeamsIcon, SlackIcon, ZoomIcon } from '~/components/meeting-service-icons'
 import { Button } from '~/components/ui/button'
 import { Switch } from '~/components/ui/switch'
 import { getDefaultRecordingShortcut } from '~/lib/config'
@@ -13,9 +13,17 @@ import type { PermissionStatus } from '~/lib/permissions'
 import { m } from '~/paraglide/messages.js'
 import { useRecordingShortcut } from '~/providers/recording-shortcut'
 import { usePreferenceProvider } from '~/providers/preference'
-import { SettingsGroup, SettingsRow } from './shared'
+import { SettingsGroup, SettingsNote, SettingsRow } from './shared'
 
 type PermissionKind = 'microphone' | 'system_audio'
+
+/** The detected sources, by the names meeting_prompt.rs reads back from the setting. */
+const AUTO_RECORD_SOURCES = [
+	{ source: 'zoom', name: 'Zoom', Icon: ZoomIcon },
+	{ source: 'teams', name: 'Microsoft Teams', Icon: MicrosoftTeamsIcon },
+	{ source: 'slack', name: 'Slack', Icon: SlackIcon },
+	{ source: 'meet', name: 'Google Meet', Icon: GoogleMeetIcon },
+] as const
 
 const statusLabels: Record<PermissionStatus, () => string> = {
 	granted: m.permissionGranted,
@@ -152,7 +160,8 @@ export function RecordingSection() {
 	const shortcut = useRecordingShortcut()
 	const { meetingDetectionEnabled, setMeetingDetectionEnabled, autoTranscribeAfterRecording, setAutoTranscribeAfterRecording } = usePreferenceProvider()
 	const isMacOS = platform() === 'macos'
-	const [autoRecordSlack, setAutoRecordSlack] = usePersisted(CONFIG_KEYS.autoRecordSlackHuddles, false)
+	const [autoRecord, setAutoRecord] = usePersisted<string[]>(CONFIG_KEYS.autoRecordMeetings, [])
+	const toggleAutoRecord = (source: string, on: boolean) => setAutoRecord([...autoRecord.filter((item) => item !== source), ...(on ? [source] : [])])
 
 	return (
 		<div className="space-y-6">
@@ -162,9 +171,25 @@ export function RecordingSection() {
 				</SettingsRow>
 				<MeetPermissionRow enabled={meetingDetectionEnabled} />
 				{meetingDetectionEnabled && platform() === 'windows' && (
-					<SettingsRow label={m.autoRecordSlackHuddles()} description={m.autoRecordSlackHuddlesInfo()}>
-						<Switch checked={autoRecordSlack} onCheckedChange={setAutoRecordSlack} aria-label={m.autoRecordSlackHuddles()} />
-					</SettingsRow>
+					<>
+						<SettingsNote>{m.autoRecordMeetingsInfo()}</SettingsNote>
+						{AUTO_RECORD_SOURCES.map(({ source, name, Icon }) => (
+							<SettingsRow
+								key={source}
+								label={
+									<span className="flex items-center gap-2">
+										<Icon className="h-4 w-4 shrink-0" />
+										{m.autoRecordMeeting({ name })}
+									</span>
+								}>
+								<Switch
+									checked={autoRecord.includes(source)}
+									onCheckedChange={(on) => toggleAutoRecord(source, on)}
+									aria-label={m.autoRecordMeeting({ name })}
+								/>
+							</SettingsRow>
+						))}
+					</>
 				)}
 			</SettingsGroup>
 

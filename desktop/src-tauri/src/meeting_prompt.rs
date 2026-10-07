@@ -29,7 +29,8 @@ tauri_nspanel::tauri_panel! {
 
 const WINDOW_LABEL: &str = "meeting-prompt";
 const ENABLED_KEY: &str = "recording.meetingDetectionEnabled";
-const AUTO_SLACK_KEY: &str = "recording.autoRecordSlackHuddles";
+/// The sources to record without asking, as their lowercase names: `["slack", "zoom"]`.
+const AUTO_RECORD_KEY: &str = "recording.autoRecordMeetings";
 const EVENT_NAME: &str = "meeting-prompt-state";
 const WIDTH: f64 = 304.0;
 const HEIGHT: f64 = 152.0;
@@ -130,7 +131,7 @@ impl Drop for Worker {
 #[derive(Default)]
 struct RuntimeInner {
     logic: PromptLogic,
-    /// Vibe started the current recording for a Slack huddle, so the huddle ending stops it.
+    /// Vibe started the current recording for a meeting, so the meeting ending stops it.
     auto_recording: bool,
     worker: Option<Worker>,
 }
@@ -152,10 +153,23 @@ fn is_enabled(app: &tauri::AppHandle) -> bool {
     flag(app, ENABLED_KEY)
 }
 
-/// Windows only: there the huddle ending is seen even while Vibe itself holds the mic. macOS
-/// can't name the mic owner, so a running Slack would keep the "huddle" going forever.
+/// Windows only: there the meeting ending is seen even while Vibe itself holds the mic. macOS
+/// can't name the mic owner, so a running call app would keep the "meeting" going forever.
 fn auto_records(app: &tauri::AppHandle, state: &MeetingPromptPayload) -> bool {
-    cfg!(windows) && state.source == Source::Slack && flag(app, AUTO_SLACK_KEY)
+    let Ok(serde_json::Value::String(source)) = serde_json::to_value(state.source) else {
+        return false;
+    };
+    cfg!(windows)
+        && app
+            .store(STORE_FILENAME)
+            .ok()
+            .and_then(|store| store.get(AUTO_RECORD_KEY))
+            .and_then(|value| {
+                value
+                    .as_array()
+                    .map(|sources| sources.iter().any(|item| item.as_str() == Some(&source)))
+            })
+            .unwrap_or(false)
 }
 
 fn create_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
@@ -278,16 +292,16 @@ fn apply_detection(app: &tauri::AppHandle, state: MeetingState) {
     let Some(runtime) = app.try_state::<MeetingPromptRuntime>() else {
         return;
     };
-    let (changed, next, huddle_ended) = {
+    let (changed, next, meeting_ended) = {
         let Ok(mut inner) = runtime.inner.lock() else {
             return;
         };
-        let huddle_ended = !state.recording && std::mem::take(&mut inner.auto_recording);
+        let meeting_ended = !state.recording && std::mem::take(&mut inner.auto_recording);
         let changed = inner.logic.detection(state);
-        (changed, inner.logic.current.clone(), huddle_ended)
+        (changed, inner.logic.current.clone(), meeting_ended)
     };
-    if huddle_ended {
-        tracing::debug!("slack huddle ended, stopping its recording");
+    if meeting_ended {
+        tracing::debug!("meeting ended, stopping its recording");
         app.emit("stop_record", ()).map_err(|error| tracing::error!("{error}")).ok();
     }
     if !changed {
@@ -295,13 +309,13 @@ fn apply_detection(app: &tauri::AppHandle, state: MeetingState) {
     }
     match next {
         Some(state) if auto_records(app, &state) => {
-            tracing::debug!("slack huddle detected, recording automatically");
+            tracing::debug!(source = ?state.source, "meeting detected, recording automatically");
             if let Ok(mut inner) = runtime.inner.lock() {
                 inner.auto_recording = true;
             }
             // Same path as pressing Start on the prompt; the main window owns the recording.
             // ponytail: a failed start leaves auto_recording set, so a recording begun by hand later
-            // in the same huddle stops with it; listen for meeting-prompt-recording-result if that bites.
+            // in the same meeting stops with it; listen for meeting-prompt-recording-result if that bites.
             app.emit_to(
                 "main",
                 "meeting-prompt-start-recording",
@@ -464,7 +478,7 @@ pub fn recording_stopped(app: &tauri::AppHandle) {
     };
     if let Ok(mut inner) = runtime.inner.lock() {
         inner.logic.recording_stopped();
-        // Stopped by hand or by the huddle ending: a later recording isn't the huddle's to stop.
+        // Stopped by hand or by the meeting ending: a later recording isn't the meeting's to stop.
         inner.auto_recording = false;
     };
 }
