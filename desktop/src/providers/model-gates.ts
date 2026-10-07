@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { m } from '~/paraglide/messages.js'
 import * as config from '~/lib/config'
 import type { ModelIntegrity } from '~/lib/config'
-import { isModelFileUsable } from '~/lib/model'
+import { isModelFileUsable, type ModelMetadata } from '~/lib/model'
 import { usePreferenceProvider } from '~/providers/preference'
 import { useToastProvider } from '~/providers/toast'
 
@@ -92,5 +92,40 @@ export function useModelGates() {
 		[ensureModel, preference],
 	)
 
-	return { toggleDiarization, toggleStableTimestamps }
+	/**
+	 * Make `modelPath` the transcription model: read what it can do, fetch the VAD model first if it
+	 * needs one, and move the language off one the model doesn't know. Shared by the settings page
+	 * and the model pickers next to the language, so switching works the same everywhere.
+	 */
+	const selectModel = useCallback(
+		async (modelPath: string) => {
+			let metadata: ModelMetadata | null = null
+			try {
+				metadata = await invoke<ModelMetadata>('get_model_metadata', { modelPath })
+			} catch (error) {
+				// Unknown GGUF formats may still be loadable by Server (for example Whisper GGUF).
+				console.error('failed to read GGUF metadata:', error)
+			}
+			if (metadata?.capabilities.requires_vad) {
+				const ready = await ensureModel({
+					filename: config.vadModelFilename,
+					url: config.vadModelUrl,
+					title: 'Download required VAD model',
+					question: 'This transcription model requires Silero VAD. Download it before selecting the model?',
+					downloading: 'Downloading Silero VAD model…',
+				})
+				if (!ready) return
+			}
+			preference.setModelMetadata(metadata)
+			const capabilities = metadata?.capabilities
+			const lang = preference.modelOptions.lang
+			if (capabilities && !(lang === 'auto' ? capabilities.language_detection : capabilities.languages.includes(lang))) {
+				preference.setModelOptions({ ...preference.modelOptions, lang: capabilities.language_detection ? 'auto' : (capabilities.languages[0] ?? 'en') })
+			}
+			preference.setModelPath(modelPath)
+		},
+		[ensureModel, preference],
+	)
+
+	return { toggleDiarization, toggleStableTimestamps, selectModel }
 }

@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from 'react'
 import { m } from '~/paraglide/messages.js'
 import { toast } from 'sonner'
 import * as clipboard from '@tauri-apps/plugin-clipboard-manager'
-import { join } from '@tauri-apps/api/path'
 import * as config from '~/lib/config'
 import { NamedPath } from '~/lib/types'
 import { getIssueUrl, resetApp } from '~/lib/app'
@@ -19,7 +18,7 @@ import { useNavigate } from 'react-router-dom'
 import { load } from '@tauri-apps/plugin-store'
 import { useStoreValue } from '~/lib/use-store-value'
 import { collectLogs, getPrettyVersion, getVersionNumber } from '~/lib/logs'
-import { cleanupPartialDownloads, isModelFileUsable, listInstalledModels, type InstalledModel, type ModelMetadata } from '~/lib/model'
+import { cleanupPartialDownloads, listInstalledModels, type InstalledModel } from '~/lib/model'
 import { buildSkill, installSkill, type SkillTarget } from '~/lib/skill'
 
 export interface GpuDevice {
@@ -197,61 +196,6 @@ export function viewModel() {
 		navigate('/setup', { state: { replacePath: model.path } })
 	}
 
-	async function readModelMetadata(modelPath: string) {
-		try {
-			return await invoke<ModelMetadata>('get_model_metadata', { modelPath })
-		} catch (error) {
-			// Unknown GGUF formats may still be loadable by Server (for example Whisper GGUF).
-			console.error('failed to read GGUF metadata:', error)
-			return null
-		}
-	}
-
-	async function ensureRequiredVad(metadata: ModelMetadata | null) {
-		if (!metadata?.capabilities.requires_vad) return true
-		const modelsFolder = await invoke<string>('get_models_folder')
-		const vadPath = await join(modelsFolder, config.vadModelFilename)
-		if (await isModelFileUsable(vadPath)) return true
-
-		const confirmed = await ask('This transcription model requires Silero VAD. Download it before selecting the model?', {
-			title: 'Download required VAD model',
-			kind: 'info',
-		})
-		if (!confirmed) return false
-
-		progressToast.setMessage('Downloading Silero VAD model…')
-		progressToast.setOpen(true)
-		progressToast.setProgress(0)
-		try {
-			await invoke('download_model', { url: config.vadModelUrl, path: vadPath })
-			toast.success(m.downloadComplete())
-			return true
-		} finally {
-			progressToast.setOpen(false)
-			progressToast.setProgress(null)
-		}
-	}
-
-	function applyModelLanguage(metadata: ModelMetadata | null) {
-		if (!metadata) return
-		const capabilities = metadata.capabilities
-		const currentLanguage = preference.modelOptions.lang
-		const isSupported = currentLanguage === 'auto' ? capabilities.language_detection : capabilities.languages.includes(currentLanguage)
-		if (isSupported) return
-		preference.setModelOptions({
-			...preference.modelOptions,
-			lang: capabilities.language_detection ? 'auto' : (capabilities.languages[0] ?? 'en'),
-		})
-	}
-
-	async function selectModel(modelPath: string) {
-		const metadata = await readModelMetadata(modelPath)
-		if (!(await ensureRequiredVad(metadata))) return
-		preference.setModelMetadata(metadata)
-		applyModelLanguage(metadata)
-		preference.setModelPath(modelPath)
-	}
-
 	async function changeProjectsPath() {
 		const path = await open({ directory: true, multiple: false })
 		if (path) {
@@ -420,7 +364,7 @@ export function viewModel() {
 		appVersionNumber,
 		reportIssue,
 		loadModels,
-		selectModel,
+		selectModel: modelGates.selectModel,
 		changeModelsFolder,
 		changeProjectsPath,
 		resetProjectsPath,
