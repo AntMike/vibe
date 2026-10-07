@@ -59,10 +59,7 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 		// Refined while the small draft model holds the GPU: a local LLM and Whisper large together would not fit 8 GB.
 		if (lines.length > 0 && !run.isAborted()) {
 			try {
-				terms = await refineDraft(lines, names, run.settings, {
-					connection: run.connection,
-					askCli: (command, prompt) => invoke<string>('ask_cli', { command, prompt }),
-				})
+				terms = await refineDraft(lines, names, run.settings, run.connection)
 			} catch (error) {
 				run.onWarning(message(error))
 			}

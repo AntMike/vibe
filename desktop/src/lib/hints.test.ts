@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DEFAULT_AI } from './ai'
+import { cliCommand, DEFAULT_AI } from './ai'
 import { buildPrompt, DEFAULT_HINTS, parseGlossary, rareWords, refineDraft } from './hints'
 
+const invokeMock = vi.fn()
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }))
 
 describe('rareWords', () => {
 	it('keeps names and mixed-case terms, most frequent first, and skips sentence starts', () => {
@@ -47,24 +49,31 @@ describe('buildPrompt', () => {
 })
 
 describe('refineDraft', () => {
-	it('sends the draft and names to the chosen CLI on stdin and parses its answer', async () => {
-		const askCli = vi.fn().mockResolvedValue('Oleksii, Kubernetes')
-		const terms = await refineDraft(
-			['we use kubernetes'],
-			['Oleksii'],
-			{ ...DEFAULT_HINTS, refiner: 'cli', cli: 'codex' },
-			{ connection: DEFAULT_AI.connection, askCli },
-		)
+	it('sends the draft and names to a CLI connection on stdin and parses its answer', async () => {
+		invokeMock.mockResolvedValue('Oleksii, Kubernetes')
+		const connection = { ...DEFAULT_AI.connection, platform: 'cli' as const, cli: 'codex' as const, model: '' }
+		const terms = await refineDraft(['we use kubernetes'], ['Oleksii'], { ...DEFAULT_HINTS, refiner: 'ai' }, connection)
 		expect(terms).toEqual(['Oleksii', 'Kubernetes'])
-		const [command, prompt] = askCli.mock.calls[0]
-		expect(command).toMatch(/^codex exec /)
+		const [name, { command, prompt }] = invokeMock.mock.calls[0]
+		expect(name).toBe('ask_cli')
+		expect(command).toBe('codex exec --skip-git-repo-check -s read-only --color never -')
 		expect(prompt).toContain('we use kubernetes')
 		expect(prompt).toContain('Known participants: Oleksii.')
 	})
 
 	it('needs no AI for the free refiner', async () => {
-		const askCli = vi.fn()
-		expect(await refineDraft(['then Oleksii spoke'], [], DEFAULT_HINTS, { connection: DEFAULT_AI.connection, askCli })).toEqual(['Oleksii'])
-		expect(askCli).not.toHaveBeenCalled()
+		invokeMock.mockReset()
+		expect(await refineDraft(['then Oleksii spoke'], [], DEFAULT_HINTS, DEFAULT_AI.connection)).toEqual(['Oleksii'])
+		expect(invokeMock).not.toHaveBeenCalled()
+	})
+})
+
+describe('cliCommand', () => {
+	it('names the model only when it is a plain identifier', () => {
+		const connection = { ...DEFAULT_AI.connection, platform: 'cli' as const, cli: 'claude' as const }
+		expect(cliCommand({ ...connection, model: '' })).toBe('claude -p')
+		expect(cliCommand({ ...connection, model: 'haiku' })).toBe('claude -p --model haiku')
+		expect(cliCommand({ ...connection, model: 'haiku && rm -rf ~' })).toBe('claude -p')
+		expect(cliCommand({ ...connection, cli: 'custom', cliCommand: ' my-ai --stdin ' })).toBe('my-ai --stdin')
 	})
 })

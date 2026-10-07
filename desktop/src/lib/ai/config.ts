@@ -20,7 +20,9 @@ export interface LegacyLlmConfig {
  * does to a sentence. Prompts belong to tasks, so changing the platform keeps them.
  */
 
-export type AiPlatform = 'ollama' | 'claude' | 'openai'
+export type AiPlatform = 'ollama' | 'claude' | 'openai' | 'cli'
+/** A command-line AI, which runs on the user's own subscription instead of an API key. */
+export type AiCli = 'claude' | 'codex' | 'gemini' | 'custom'
 
 export interface AiConnection {
 	platform: AiPlatform
@@ -30,6 +32,25 @@ export interface AiConnection {
 	ollamaBaseUrl: string
 	openaiBaseUrl: string
 	openaiApiKey: string
+	/** For `platform: 'cli'`; absent in settings saved before it existed. */
+	cli?: AiCli
+	/** Reads the prompt on stdin and prints the answer, for `cli: 'custom'`. */
+	cliCommand?: string
+}
+
+/** Each reads the prompt on stdin and prints only the answer; an empty model keeps the tool's own default. */
+const CLI_COMMANDS: Record<Exclude<AiCli, 'custom'>, (model: string) => string> = {
+	claude: (model) => `claude -p${model ? ` --model ${model}` : ''}`,
+	codex: (model) => `codex exec --skip-git-repo-check -s read-only --color never${model ? ` -m ${model}` : ''} -`,
+	gemini: (model) => `gemini${model ? ` -m ${model}` : ''}`,
+}
+
+/** The shell command for a CLI connection. A model name that isn't a plain identifier is left out rather than reach the shell. */
+export function cliCommand(connection: AiConnection) {
+	const cli = connection.cli ?? 'claude'
+	if (cli === 'custom') return connection.cliCommand?.trim() ?? ''
+	const model = /^[\w.:/[\]-]+$/.test(connection.model.trim()) ? connection.model.trim() : ''
+	return CLI_COMMANDS[cli](model)
 }
 
 export interface AiTask {
@@ -119,6 +140,8 @@ export const DEFAULT_AI: AiSettings = {
 		ollamaBaseUrl: 'http://localhost:11434',
 		openaiBaseUrl: 'https://api.openai.com/v1',
 		openaiApiKey: '',
+		cli: 'claude',
+		cliCommand: '',
 	},
 	tasks: {
 		summary: { enabled: false, autoOnFinish: false, preset: 'summary', prompt: presetPrompt('summary') },
@@ -128,6 +151,8 @@ export const DEFAULT_AI: AiSettings = {
 
 /** The default model for a platform, so switching platforms never leaves a Claude model on Ollama. */
 export function defaultModel(platform: AiPlatform) {
+	// A CLI starts on the tool's own default model until one is named.
+	if (platform === 'cli') return ''
 	return platform === 'ollama' ? 'gemma4:e2b' : platform === 'openai' ? 'gpt-5.6-luna' : 'claude-sonnet-5'
 }
 

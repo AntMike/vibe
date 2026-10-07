@@ -1,5 +1,6 @@
+import { invoke } from '@tauri-apps/api/core'
 import { fetch } from '@tauri-apps/plugin-http'
-import { PLACEHOLDERS, type AiConnection } from './config'
+import { cliCommand, PLACEHOLDERS, type AiConnection } from './config'
 
 /** Output ceiling; the input side of the context is what is left after it and a margin. */
 const MAX_OUTPUT_TOKENS = 8_192
@@ -243,10 +244,28 @@ class Claude implements AiClient {
 	}
 }
 
+/** A command-line AI run by the backend, prompt on stdin. It answers all at once, so a stream is one piece. */
+class Cli implements AiClient {
+	constructor(private connection: AiConnection) {}
+	async ask(prompt: string) {
+		try {
+			return await invoke<string>('ask_cli', { command: cliCommand(this.connection), prompt })
+		} catch (error) {
+			throw new Error((error as { message?: string })?.message ?? String(error))
+		}
+	}
+	async stream(prompt: string, onToken: (text: string) => void) {
+		const text = await this.ask(prompt)
+		onToken(text)
+		return text
+	}
+}
+
 /** `unloadAfter` frees a local model's memory as soon as it answers, for when a speech model needs it next. */
 export function createClient(connection: AiConnection, { unloadAfter = false } = {}): AiClient {
 	if (connection.platform === 'ollama') return new Ollama(connection, unloadAfter)
 	if (connection.platform === 'openai') return new OpenAICompatible(connection)
+	if (connection.platform === 'cli') return new Cli(connection)
 	return new Claude(connection)
 }
 

@@ -1,11 +1,11 @@
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Check, ChevronRight, Copy, ExternalLink } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, SquareTerminal } from 'lucide-react'
 import { siClaude, siOllama } from 'simple-icons'
 import { OPENAI_PATH } from '~/components/brand-glyph'
 import { m } from '~/paraglide/messages.js'
 import { ReactComponent as LinkIcon } from '~/icons/link.svg'
 import * as config from '~/lib/config'
-import { defaultModel, type AiPlatform, type AiSettings } from '~/lib/ai'
+import { cliCommand, defaultModel, type AiCli, type AiPlatform, type AiSettings } from '~/lib/ai'
 import NumberField from '~/components/number-field'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
@@ -28,13 +28,22 @@ function LabelWithLink({ label, tooltip, onClick }: { label: string; tooltip: st
 }
 
 /** Brand marks for the providers, so the picker reads at a glance. */
-const platformIcons: Record<AiPlatform, { path: string; title: string }> = {
+const platformIcons: Record<Exclude<AiPlatform, 'cli'>, { path: string; title: string }> = {
 	claude: { path: siClaude.path, title: siClaude.title },
 	ollama: { path: siOllama.path, title: siOllama.title },
 	openai: { path: OPENAI_PATH, title: 'OpenAI' },
 }
 
+const cliLabels: Record<Exclude<AiCli, 'custom'>, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI' }
+
 function PlatformOption({ platform }: { platform: AiPlatform }) {
+	if (platform === 'cli')
+		return (
+			<span className="flex items-center gap-2">
+				<SquareTerminal className="h-4 w-4 shrink-0" aria-hidden />
+				{m.aiPlatformCli()}
+			</span>
+		)
 	const icon = platformIcons[platform]
 	return (
 		<span className="flex items-center gap-2">
@@ -102,7 +111,7 @@ export function AiSection({ vm, onOpenPrompt }: { vm: SettingsViewModel; onOpenP
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							{(['claude', 'ollama', 'openai'] as const).map((name) => (
+							{(['claude', 'ollama', 'openai', 'cli'] as const).map((name) => (
 								<SelectItem key={name} value={name}>
 									<PlatformOption platform={name} />
 								</SelectItem>
@@ -196,6 +205,45 @@ export function AiSection({ vm, onOpenPrompt }: { vm: SettingsViewModel; onOpenP
 								className={`w-64 ${rowControlClass}`}
 							/>
 						</SettingsRow>
+					</>
+				)}
+
+				{connection.platform === 'cli' && (
+					<>
+						<SettingsRow label={m.aiCliTool()} description={<span className="font-mono text-xs">{cliCommand(connection) || '—'}</span>}>
+							<Select value={connection.cli ?? 'claude'} onValueChange={(cli: AiCli) => setConnection({ cli })}>
+								<SelectTrigger className={`w-52 ${rowControlClass}`}>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{(['claude', 'codex', 'gemini', 'custom'] as const).map((cli) => (
+										<SelectItem key={cli} value={cli}>
+											{cli === 'custom' ? m.aiCliCustom() : cliLabels[cli]}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</SettingsRow>
+						{connection.cli === 'custom' ? (
+							<SettingsRow label={m.aiCliCustom()} description={m.aiCliCustomInfo()}>
+								<Input
+									value={connection.cliCommand ?? ''}
+									onChange={(e) => setConnection({ cliCommand: e.target.value })}
+									placeholder="claude -p --model haiku"
+									className={`w-64 font-mono ${rowControlClass}`}
+								/>
+							</SettingsRow>
+						) : (
+							<SettingsRow label={m.llmModel()} description={m.aiCliModelInfo()}>
+								<Input
+									value={connection.model}
+									onChange={(e) => setConnection({ model: e.target.value })}
+									placeholder={(connection.cli ?? 'claude') === 'claude' ? 'haiku' : ''}
+									className={`w-64 ${rowControlClass}`}
+								/>
+							</SettingsRow>
+						)}
+						<SettingsNote>{m.aiCliNote()}</SettingsNote>
 					</>
 				)}
 

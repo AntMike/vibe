@@ -4,10 +4,9 @@ import { chunkLines, createClient, fillPrompt, type AiConnection } from './ai'
  * Recognition hints: a glossary of the names and terms in a recording, handed to Whisper as its
  * prompt so it spells them right. The terms come from the call's participant names and, when a draft
  * model is set, from a fast first pass (Parakeet) that is boiled down to its rare words — by a free
- * heuristic, the AI connection (local Ollama, an API), or a command-line AI on the user's subscription.
+ * heuristic or by the AI connection: an API, local Ollama, or a command-line AI on the user's subscription.
  */
-export type HintsRefiner = 'words' | 'ai' | 'cli'
-export type HintsCli = 'claude' | 'codex' | 'gemini' | 'custom'
+export type HintsRefiner = 'words' | 'ai'
 
 export interface HintsSettings {
 	enabled: boolean
@@ -16,9 +15,6 @@ export interface HintsSettings {
 	/** Model for the draft pass; null skips it. */
 	draftModelPath: string | null
 	refiner: HintsRefiner
-	cli: HintsCli
-	/** Reads the prompt on stdin and prints the answer, for `cli: 'custom'`. */
-	customCommand: string
 }
 
 export const DEFAULT_HINTS: HintsSettings = {
@@ -26,19 +22,6 @@ export const DEFAULT_HINTS: HintsSettings = {
 	callNames: true,
 	draftModelPath: null,
 	refiner: 'words',
-	cli: 'claude',
-	customCommand: '',
-}
-
-/** Each reads the prompt on stdin and prints only the answer on stdout. */
-export const CLI_COMMANDS: Record<Exclude<HintsCli, 'custom'>, string> = {
-	claude: 'claude -p',
-	codex: 'codex exec --skip-git-repo-check -s read-only --color never -',
-	gemini: 'gemini',
-}
-
-export function cliCommand(settings: HintsSettings) {
-	return settings.cli === 'custom' ? settings.customCommand.trim() : CLI_COMMANDS[settings.cli]
 }
 
 /**
@@ -128,22 +111,13 @@ export function buildPrompt(terms: string[], userPrompt?: string): string {
 	return [userPrompt?.trim(), glossary].filter(Boolean).join(' ')
 }
 
-export interface RefineDeps {
-	connection: AiConnection
-	askCli: (command: string, prompt: string) => Promise<string>
-}
-
 /** Boil a draft transcript down to its glossary with the chosen refiner. */
-export async function refineDraft(lines: string[], names: string[], settings: HintsSettings, deps: RefineDeps): Promise<string[]> {
+export async function refineDraft(lines: string[], names: string[], settings: HintsSettings, connection: AiConnection): Promise<string[]> {
 	if (settings.refiner === 'words') return rareWords(lines.join('\n'))
-	const contextTokens = settings.refiner === 'ai' ? deps.connection.contextTokens : CLI_CONTEXT_TOKENS
+	const contextTokens = connection.platform === 'cli' ? CLI_CONTEXT_TOKENS : connection.contextTokens
 	// ponytail: only the first context-full of a long draft; names past it rarely matter more than the opening's.
 	const transcript = chunkLines(lines, GLOSSARY_PROMPT, contextTokens)[0]
 	const prompt = fillPrompt(GLOSSARY_PROMPT, { transcript, speakers: names.join(', ') || 'unknown' })
-	const reply =
-		settings.refiner === 'ai'
-			? // Unloaded right after: Whisper needs the GPU memory next.
-				await createClient(deps.connection, { unloadAfter: true }).ask(prompt)
-			: await deps.askCli(cliCommand(settings), prompt)
-	return parseGlossary(reply)
+	// Unloaded right after when local: Whisper needs the GPU memory next.
+	return parseGlossary(await createClient(connection, { unloadAfter: true }).ask(prompt))
 }
