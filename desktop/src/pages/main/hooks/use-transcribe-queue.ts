@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import * as webview from '@tauri-apps/api/webviewWindow'
+import * as fsExt from '@tauri-apps/plugin-fs'
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import successSound from '~/assets/success.mp3'
@@ -16,7 +17,8 @@ import { autoProjectName } from '~/lib/project-name'
 import { gpuOutOfMemoryBefore, rememberGpuOutOfMemory } from '~/lib/gpu-memory'
 import { fatalRunError, isGpuOutOfMemory, isUserError, serverErrorCodes } from '~/lib/server-errors'
 import { carrySpeakerNames, speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
-import { hintOptions } from './transcribe-hints'
+import { mergeRuns } from '~/lib/vote'
+import { extraPasses, hintOptions, type Hints } from './transcribe-hints'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
 	notifyTranscriptsChanged,
@@ -156,11 +158,14 @@ function nextJobId() {
 /** Options shared by every file of a run (diarize / vad model paths). */
 async function buildSharedOptions(preference: Preference) {
 	const requiresVad = preference.modelMetadata?.capabilities.requires_vad ?? false
-	const needsFolder = preference.diarizeEnabled || preference.stableTimestampsEnabled || requiresVad
-	const modelsFolder = needsFolder ? await invoke<string>('get_models_folder') : null
+	const modelsFolder = await invoke<string>('get_models_folder')
+	const vadModel = `${modelsFolder}/${config.vadModelFilename}`
+	// Whisper decodes only what the VAD hears as speech once the file is there (it comes with
+	// Parakeet or stable timestamps), so silence never becomes an invented line.
+	const useVad = preference.stableTimestampsEnabled || requiresVad || (await fsExt.exists(vadModel).catch(() => false))
 	return {
 		...(preference.diarizeEnabled ? { diarize_model: `${modelsFolder}/${config.diarizeModelFilename}` } : {}),
-		...(preference.stableTimestampsEnabled || requiresVad ? { vad_model: `${modelsFolder}/${config.vadModelFilename}` } : {}),
+		...(useVad ? { vad_model: vadModel } : {}),
 		...(preference.stableTimestampsEnabled ? { stable_timestamps: true } : {}),
 	}
 }
@@ -435,7 +440,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 				trackTranscribeStarted('main', next.path)
 				try {
 					const options = preferenceRef.current
-					let hints: Awaited<ReturnType<typeof hintOptions>> = null
+					let hints: Hints | null = null
 					if (options.hints.enabled && options.modelMetadata?.capabilities.text_prompts !== false) {
 						draftingRef.current = true
 						try {
@@ -466,13 +471,42 @@ export function useTranscribeQueue(): TranscribeQueue {
 							path: next.path,
 							...withoutUnsupportedOptions(options.modelOptions, options.modelMetadata?.capabilities),
 							...shared,
-							...hints,
+							...hints?.prompt,
 						},
 					})
 					const seconds = Math.round((performance.now() - startedAt) / 1000)
+					// More runs to merge with: the draft, plus one per extra model. Their lines are not the job's.
+					let runs: Segment[][] = hints?.draft.length ? [hints.draft] : []
+					if (options.extraPasses.length > 0) {
+						draftingRef.current = true
+						try {
+							runs = await extraPasses(
+								next.path,
+								options.extraPasses,
+								{ model: hints?.draft.length ? options.hints.draftModelPath : null, segments: hints?.draft ?? [] },
+								{
+									mainModelPath: current.modelPath,
+									loadModel: async (modelPath) => {
+										await invoke('load_model', {
+											modelPath,
+											gpuDevice: current.gpuDevice,
+											noGpu: onCpu,
+											unloadTimeoutMinutes: current.unloadTimeoutMinutes,
+										})
+									},
+									isAborted: () => abortCurrentRef.current || abortAllRef.current,
+									onWarning: (message) => toast.warning(m.extraPassFailed({ message }), { position: 'bottom-center', duration: 8000 }),
+								},
+							)
+						} finally {
+							draftingRef.current = false
+						}
+						if (abortCurrentRef.current || abortAllRef.current) throw new Error('cancelled')
+					}
+					const heard = mergeRuns(result.segments, runs)
 					// A recorded call knows who was talking when: give each sentence that person.
-					const fromCall = next.callSpeakers && speakersFromCall(result.segments, next.callSpeakers)
-					const segments = fromCall ? fromCall.segments : result.segments
+					const fromCall = next.callSpeakers && speakersFromCall(heard, next.callSpeakers)
+					const segments = fromCall ? fromCall.segments : heard
 					// Re-transcribed: names the user gave before win over the call's.
 					const carried = next.previous?.speakerNames && carrySpeakerNames(next.previous.segments, next.previous.speakerNames, segments)
 					const speakerNames = carried ? { ...fromCall?.speakerNames, ...carried } : fromCall ? fromCall.speakerNames : next.speakerNames

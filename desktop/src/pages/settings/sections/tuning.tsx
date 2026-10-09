@@ -1,7 +1,9 @@
 import { ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { DEFAULT_MODEL_OPTIONS } from '~/providers/preference'
 import { m } from '~/paraglide/messages.js'
+import { Button } from '~/components/ui/button'
 import { Switch } from '~/components/ui/switch'
+import { getFriendlyModelName } from '~/lib/model'
 import { HintsGroup } from './hints'
 import { ActionRow, SettingsGroup, SettingsNote, SettingsRow, type SettingsViewModel } from './shared'
 
@@ -26,6 +28,32 @@ export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; on
 				{vm.preference.stableTimestampsEnabled && <SettingsNote>{m.stableTimestampsSlowNote()}</SettingsNote>}
 			</SettingsGroup>
 			<HintsGroup vm={vm} />
+			<SettingsGroup title={m.extraPasses()}>
+				<SettingsNote>{m.extraPassesInfo()}</SettingsNote>
+				<div className="flex flex-wrap gap-2 px-4 pb-3">
+					{vm.models
+						.filter((model) => model.path !== vm.preference.modelPath)
+						.map((model) => {
+							const chosen = vm.preference.extraPasses.includes(model.path)
+							return (
+								<Button
+									key={model.path}
+									type="button"
+									size="sm"
+									variant={chosen ? 'default' : 'outline'}
+									onClick={() =>
+										vm.preference.setExtraPasses(
+											chosen
+												? vm.preference.extraPasses.filter((path) => path !== model.path)
+												: [...vm.preference.extraPasses, model.path],
+										)
+									}>
+									{vm.preference.modelDisplayNames[model.path] ?? getFriendlyModelName(model.name)}
+								</Button>
+							)
+						})}
+				</div>
+			</SettingsGroup>
 			<SettingsGroup>
 				<ActionRow
 					label={

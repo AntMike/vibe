@@ -41,6 +41,8 @@ export const CONFIG_KEYS = {
 	autoExport: 'transcription.autoExport',
 	/** Glossary prompt for Whisper from call names and a draft pass; see `lib/hints`. */
 	hints: 'transcription.recognitionHints',
+	/** Models each file is transcribed again with, to merge the runs; see `lib/vote`. */
+	extraPasses: 'transcription.extraPasses',
 
 	// Recording
 	inputDeviceId: 'recording.inputDeviceId',

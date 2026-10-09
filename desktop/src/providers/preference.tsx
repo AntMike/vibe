@@ -113,6 +113,9 @@ export interface Preference {
 	setAutoExport: ModifyState<AutoExportSettings>
 	hints: HintsSettings
 	setHints: (hints: HintsSettings) => void
+	/** Model paths each file is transcribed again with, merged into the main pass. */
+	extraPasses: string[]
+	setExtraPasses: ModifyState<string[]>
 
 	gpuDevice: number | null
 	setGpuDevice: ModifyState<number | null>
@@ -171,7 +174,8 @@ export const DEFAULT_MODEL_OPTIONS: ModelOptions = {
 	verbose: false,
 	lang: 'en',
 	n_threads: 4,
-	temperature: 0.4,
+	// 0 is where beam search runs; any higher and the first pass is random samples instead.
+	temperature: 0,
 	max_text_ctx: undefined,
 	word_timestamps: false,
 	max_sentence_len: undefined,
@@ -219,6 +223,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const setHints = useCallback((next: HintsSettings) => setStoredHints(next), [setStoredHints])
 	// Fields added later fall back to their defaults instead of reading as undefined.
 	const hints = useMemo(() => ({ ...DEFAULT_HINTS, ...storedHints }), [storedHints])
+	const [extraPasses, setExtraPasses] = usePersisted<string[]>(CONFIG_KEYS.extraPasses, [])
 	// The pre-3.2 `summarize.llm` object is read once when `ai` is missing, so nobody loses a key or a prompt.
 	const [ai, setAi] = usePersisted<AiSettings>(
 		CONFIG_KEYS.ai,
@@ -434,6 +439,8 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setAutoExport,
 		hints,
 		setHints,
+		extraPasses,
+		setExtraPasses,
 		advancedTranscribeOptions,
 		setAdvancedTranscribeOptions,
 		recentLanguages,
