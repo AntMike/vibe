@@ -7,6 +7,12 @@ use axum::response::Response;
 use crate::server::transcription::TranscriptionRequest;
 use crate::server::{error, AppState, MAX_UPLOAD_SIZE};
 
+/// Transcribe an uploaded audio file.
+///
+/// Multipart form: `file` plus optional fields. `draft_runs` (integer, 1-8,
+/// default 1) decodes Parakeet audio that many times, later runs on slightly
+/// shifted or sped-up copies, and keeps the most confident words where the runs
+/// disagree; other engines ignore it.
 #[utoipa::path(
     post,
     path = "/v1/audio/transcriptions",

@@ -40,6 +40,10 @@ pub struct TranscribeOptions {
     /// When set, each window is transcribed on its own, with its own language
     /// when the language is auto. Audio outside every window is skipped.
     pub windows: Vec<Window>,
+    /// Parakeet only: how many times each window is decoded (1..=8). Runs after
+    /// the first hear a slightly shifted or sped-up copy, and every stretch they
+    /// hear differently keeps the surest variant.
+    pub draft_runs: i32,
 }
 
 /// A slice of the input transcribed on its own, such as one speaker turn.
@@ -73,6 +77,7 @@ impl Default for TranscribeOptions {
             vad_model_path: None,
             languages: Vec::new(),
             windows: Vec::new(),
+            draft_runs: 1,
         }
     }
 }

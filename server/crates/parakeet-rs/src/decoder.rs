@@ -7,6 +7,8 @@ pub struct Token {
     pub id: u32,
     pub frame: usize,
     pub duration_frames: usize,
+    /// Softmax probability of this token over the vocabulary at its step.
+    pub prob: f32,
 }
 
 struct StepGraph {
@@ -183,10 +185,16 @@ impl Model {
                         sys::ggml_backend_tensor_get(step_graph.next_h[layer], h[layer].as_mut_ptr().cast(), 0, hidden * 4);
                         sys::ggml_backend_tensor_get(step_graph.next_c[layer], c[layer].as_mut_ptr().cast(), 0, hidden * 4);
                     }
+                    let token_logit = logits[token];
+                    let sum = logits[..token_classes]
+                        .iter()
+                        .map(|logit| (logit - token_logit).exp())
+                        .sum::<f32>();
                     output.push(Token {
                         id: token as u32,
                         frame,
                         duration_frames: duration,
+                        prob: 1.0 / sum,
                     });
                     embedding = embedding_graph.lookup(&runtime, token as u32, hidden)?;
                 }

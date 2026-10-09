@@ -47,6 +47,7 @@ mod tests {
                 id: index as u32,
                 frame: index * 10,
                 duration_frames: 1,
+                prob: 1.0,
             })
             .collect();
         let pieces = ["Hello", " world.", "How", " are", " you?"];
@@ -68,11 +69,13 @@ mod tests {
                 id: 0,
                 frame: 4,
                 duration_frames: 1,
+                prob: 1.0,
             },
             Token {
                 id: 1,
                 frame: 8,
                 duration_frames: 1,
+                prob: 1.0,
             },
         ];
         let pieces = ["still", " talking"];

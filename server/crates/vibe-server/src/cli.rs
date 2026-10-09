@@ -56,6 +56,9 @@ enum Command {
         beam_size: i32,
         #[arg(long, default_value_t = -1)]
         gpu_device: i32,
+        /// Parakeet only: decode this many times (1-8) and keep the surest words.
+        #[arg(long, default_value_t = 1)]
+        draft_runs: i32,
     },
     Serve {
         model: Option<String>,
@@ -123,6 +126,7 @@ pub async fn run() -> anyhow::Result<()> {
             best_of,
             beam_size,
             gpu_device,
+            draft_runs,
         } => {
             transcribe_command(
                 TranscribeArgs {
@@ -142,6 +146,7 @@ pub async fn run() -> anyhow::Result<()> {
                     best_of,
                     beam_size,
                     gpu_device,
+                    draft_runs,
                 },
                 config,
             )
@@ -204,6 +209,7 @@ async fn transcribe_command(args: TranscribeArgs, config: AppConfig) -> anyhow::
                 best_of: args.best_of,
                 beam_size: args.beam_size,
                 vad_model_path: args.vad_model,
+                draft_runs: args.draft_runs,
                 ..TranscribeOptions::default()
             },
         )
@@ -264,4 +270,5 @@ struct TranscribeArgs {
     best_of: i32,
     beam_size: i32,
     gpu_device: i32,
+    draft_runs: i32,
 }

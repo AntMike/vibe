@@ -143,6 +143,7 @@ pub(super) fn build_options(
             })
             .unwrap_or_default(),
         windows: Vec::new(),
+        draft_runs: values.i32("draft_runs"),
     }
 }
 

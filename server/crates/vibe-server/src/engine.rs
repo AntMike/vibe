@@ -2,6 +2,8 @@ use anyhow::{bail, Context as _};
 use serde::Serialize;
 use whisper_rs::{ContextOptions, Segment, StreamCallbacks, TranscribeOptions, TranscribeResult, Window};
 
+use crate::draft_vote;
+
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct EngineCapabilities {
     pub engine: String,
@@ -191,11 +193,13 @@ impl Engine {
                 } else {
                     options.windows.clone()
                 };
+                let runs = options.draft_runs.clamp(1, 8) as usize;
                 let total = windows
                     .iter()
                     .map(|window| window.end_sample.saturating_sub(window.start_sample))
                     .sum::<usize>()
-                    .max(1);
+                    .max(1)
+                    * runs;
                 let mut done = 0;
                 let mut segments = Vec::new();
                 for window in windows {
@@ -208,49 +212,91 @@ impl Engine {
                     // itself ends at a quiet cut: audio that stops mid-word makes
                     // the model drop the whole last sentence.
                     let context_start = start.saturating_sub(PARAKEET_LEAD_IN);
-                    let in_window =
-                        |token: &parakeet_rs::Token| start == 0 || context_start + token.frame * PARAKEET_FRAME_SAMPLES >= start;
                     let offset_cs = (context_start / 160) as i64;
                     let tokenizer = model.tokenizer();
-                    model
-                        .transcribe_with(
-                            vad,
-                            &samples[context_start..end],
-                            language,
-                            || should_abort.as_mut().is_some_and(|callback| callback()),
-                            |transcription| {
-                                let tokens: Vec<_> = transcription
-                                    .tokens
-                                    .iter()
-                                    .filter(|token| in_window(token))
-                                    .cloned()
-                                    .collect();
-                                let kept = if tokens.len() == transcription.tokens.len() {
-                                    parakeet_segment(transcription)
-                                } else {
-                                    let ids: Vec<_> = tokens.iter().map(|token| token.id).collect();
-                                    parakeet_segment(&parakeet_rs::Transcription {
-                                        text: tokenizer.decode_clean(&ids),
-                                        tokens,
-                                    })
-                                };
-                                if let Some(mut segment) = kept {
-                                    segment.start += offset_cs;
-                                    segment.end += offset_cs;
-                                    if let Some(callback) = on_segment.as_mut() {
-                                        callback(segment.clone());
+                    // With draft runs, run 0's lines wait for the other runs and
+                    // are merged with them before they are sent.
+                    let mut base = Vec::new();
+                    let mut lines = Vec::new();
+                    let mut drafts = Vec::new();
+                    for run in 0..runs {
+                        let perturbation = draft_vote::Perturbation::for_run(run);
+                        let audio = perturbation.apply(&samples[context_start..end]);
+                        let position = |token: &parakeet_rs::Token| perturbation.original(token.frame * PARAKEET_FRAME_SAMPLES);
+                        let in_window = |token: &parakeet_rs::Token| start == 0 || context_start + position(token) >= start;
+                        let word_time = |token: &parakeet_rs::Token| offset_cs + (position(token) / 160) as i64;
+                        let mut heard = Vec::new();
+                        model
+                            .transcribe_with(
+                                vad,
+                                &audio,
+                                language,
+                                || should_abort.as_mut().is_some_and(|callback| callback()),
+                                |transcription| {
+                                    let tokens: Vec<_> = transcription
+                                        .tokens
+                                        .iter()
+                                        .filter(|token| in_window(token))
+                                        .cloned()
+                                        .collect();
+                                    if run > 0 {
+                                        heard.extend(draft_vote::words(&tokens, tokenizer, word_time));
+                                        return;
                                     }
-                                    segments.push(segment);
-                                }
-                            },
-                            |progress| {
-                                if let Some(callback) = on_progress.as_mut() {
-                                    callback(((done + len * progress as usize / 100) * 100 / total) as i32);
-                                }
-                            },
-                        )
-                        .context("Parakeet inference failed")?;
-                    done += len;
+                                    let words = (runs > 1).then(|| draft_vote::words(&tokens, tokenizer, word_time));
+                                    let kept = if tokens.len() == transcription.tokens.len() {
+                                        parakeet_segment(transcription)
+                                    } else {
+                                        let ids: Vec<_> = tokens.iter().map(|token| token.id).collect();
+                                        parakeet_segment(&parakeet_rs::Transcription {
+                                            text: tokenizer.decode_clean(&ids),
+                                            tokens,
+                                        })
+                                    };
+                                    if let Some(mut segment) = kept {
+                                        segment.start += offset_cs;
+                                        segment.end += offset_cs;
+                                        if let Some(words) = words {
+                                            lines.push(draft_vote::Line {
+                                                start: segment.start,
+                                                end: segment.end,
+                                                words,
+                                            });
+                                            base.push(segment);
+                                            return;
+                                        }
+                                        if let Some(callback) = on_segment.as_mut() {
+                                            callback(segment.clone());
+                                        }
+                                        segments.push(segment);
+                                    }
+                                },
+                                |progress| {
+                                    if let Some(callback) = on_progress.as_mut() {
+                                        callback(((done + len * progress as usize / 100) * 100 / total) as i32);
+                                    }
+                                },
+                            )
+                            .context("Parakeet inference failed")?;
+                        if run > 0 {
+                            drafts.push(heard);
+                        }
+                        done += len;
+                    }
+                    let merged = draft_vote::combine(&lines, &drafts);
+                    for ((mut segment, line), words) in base.into_iter().zip(&lines).zip(merged) {
+                        if words.is_empty() {
+                            continue;
+                        }
+                        // ponytail: a changed line keeps run 0's start and end.
+                        if words != line.words {
+                            segment.text = words.iter().map(|word| word.text.as_str()).collect::<Vec<_>>().join(" ");
+                        }
+                        if let Some(callback) = on_segment.as_mut() {
+                            callback(segment.clone());
+                        }
+                        segments.push(segment);
+                    }
                 }
                 Ok(TranscribeResult { segments })
             }
