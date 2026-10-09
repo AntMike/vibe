@@ -148,8 +148,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		return () => recordingShortcut.setNormalRecordingActive(false)
 	}, [recording.isRecording, recordingShortcut.setNormalRecordingActive])
 
+	// A recording started from the prompt, a notification or the shortcut is only visible on the
+	// idle screen, so leave a finished transcript for it. A running transcription keeps the screen:
+	// reset would cancel it, and the recording joins the session when it ends.
 	useEffect(() => {
-		if (recordingShortcut.isShortcutRecording) setPanel('record')
+		if (!recordingShortcut.isShortcutRecording) return
+		if (!queue.running) queue.reset()
+		setPanel('record')
 	}, [recordingShortcut.isShortcutRecording])
 
 	useEffect(() => {
