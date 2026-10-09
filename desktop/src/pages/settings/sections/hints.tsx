@@ -2,16 +2,23 @@ import { m } from '~/paraglide/messages.js'
 import type { HintsRefiner, HintsSettings } from '~/lib/hints'
 import { getFriendlyModelName } from '~/lib/model'
 import { Switch } from '~/components/ui/switch'
+import { Input } from '~/components/ui/input'
+import { Button } from '~/components/ui/button'
+import { openPath } from '~/lib/app'
+import { vocabularyFile } from '~/lib/vocabulary'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { SettingsGroup, SettingsNote, SettingsRow, rowControlClass, type SettingsViewModel } from './shared'
 
 /** Select has no empty value; this stands for "no draft pass". */
 const NO_DRAFT = 'none'
+const DRAFT_RUNS = [1, 2, 3, 4, 5]
 
 /** Recognition hints: a glossary for Whisper from call names and an optional draft pass. */
 export function HintsGroup({ vm }: { vm: SettingsViewModel }) {
 	const { hints, setHints } = vm.preference
 	const set = (patch: Partial<HintsSettings>) => setHints({ ...hints, ...patch })
+	const connection = vm.preference.ai.connection
+	const customCli = connection.platform === 'cli' && connection.cli === 'custom'
 
 	return (
 		<SettingsGroup title={m.hints()}>
@@ -45,6 +52,22 @@ export function HintsGroup({ vm }: { vm: SettingsViewModel }) {
 						</Select>
 					</SettingsRow>
 					{hints.draftModelPath && (
+						<SettingsRow label={m.hintsDraftRuns()} description={m.hintsDraftRunsInfo()}>
+							<Select value={String(hints.draftRuns)} onValueChange={(value) => set({ draftRuns: Number(value) })}>
+								<SelectTrigger className={`w-56 ${rowControlClass}`}>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{DRAFT_RUNS.map((runs) => (
+										<SelectItem key={runs} value={String(runs)}>
+											{runs}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</SettingsRow>
+					)}
+					{hints.draftModelPath && (
 						<SettingsRow label={m.hintsRefiner()} description={m.hintsRefinerInfo()}>
 							<Select value={hints.refiner === 'words' ? 'words' : 'ai'} onValueChange={(refiner: HintsRefiner) => set({ refiner })}>
 								<SelectTrigger className={`w-56 ${rowControlClass}`}>
@@ -57,7 +80,31 @@ export function HintsGroup({ vm }: { vm: SettingsViewModel }) {
 							</Select>
 						</SettingsRow>
 					)}
-					{hints.draftModelPath && hints.refiner !== 'words' && <SettingsNote>{m.hintsRefinerAiNote()}</SettingsNote>}
+					{hints.draftModelPath && hints.refiner !== 'words' && (
+						<>
+							<SettingsRow
+								label={customCli ? m.hintsAiCommand() : m.hintsAiModel()}
+								description={customCli ? m.hintsAiCommandInfo() : m.hintsAiModelInfo()}>
+								<Input
+									value={hints.aiModel ?? ''}
+									onChange={(e) => set({ aiModel: e.target.value })}
+									placeholder={customCli ? connection.cliCommand : connection.model}
+									className={`${customCli ? 'w-64' : 'w-56'} ${rowControlClass}`}
+								/>
+							</SettingsRow>
+							<SettingsNote>{m.hintsRefinerAiNote()}</SettingsNote>
+						</>
+					)}
+					<SettingsRow label={m.hintsLearn()} description={m.hintsLearnInfo()}>
+						<div className="flex items-center gap-2">
+							{hints.learn && (
+								<Button variant="outline" size="sm" onClick={async () => openPath({ name: '', path: await vocabularyFile(vm.preference.projectsPath) })}>
+									{m.hintsLearnOpen()}
+								</Button>
+							)}
+							<Switch checked={hints.learn} onCheckedChange={(learn) => set({ learn })} />
+						</div>
+					</SettingsRow>
 				</>
 			)}
 		</SettingsGroup>

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { cliCommand, DEFAULT_AI } from './ai'
 import { buildPrompt, DEFAULT_HINTS, parseGlossary, rareWords, refineDraft } from './hints'
 
+const LEAN = '--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence'
+
 const invokeMock = vi.fn()
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }))
@@ -61,6 +63,30 @@ describe('refineDraft', () => {
 		expect(prompt).toContain('Known participants: Oleksii.')
 	})
 
+	it('uses its own model when set', async () => {
+		invokeMock.mockReset()
+		invokeMock.mockResolvedValue('Oleksii')
+		const connection = { ...DEFAULT_AI.connection, platform: 'cli' as const, cli: 'claude' as const, model: 'opus' }
+		await refineDraft(['hi'], [], { ...DEFAULT_HINTS, refiner: 'ai', aiModel: ' haiku ' }, connection)
+		expect(invokeMock.mock.calls[0][1].command).toBe(`claude -p --model haiku ${LEAN}`)
+	})
+
+	it('runs its own command over a custom CLI connection', async () => {
+		invokeMock.mockReset()
+		invokeMock.mockResolvedValue('Oleksii')
+		const connection = { ...DEFAULT_AI.connection, platform: 'cli' as const, cli: 'custom' as const, cliCommand: 'claude -p --model sonnet' }
+		await refineDraft(['hi'], [], { ...DEFAULT_HINTS, refiner: 'ai', aiModel: 'claude -p --model haiku' }, connection)
+		expect(invokeMock.mock.calls[0][1].command).toBe('claude -p --model haiku')
+	})
+
+	it('tells the AI the known terms', async () => {
+		invokeMock.mockReset()
+		invokeMock.mockResolvedValue('Mumblum')
+		const connection = { ...DEFAULT_AI.connection, platform: 'cli' as const, cli: 'claude' as const }
+		await refineDraft(['по мумблуму'], [], { ...DEFAULT_HINTS, refiner: 'ai' }, connection, ['Mumblum', 'ШІ'])
+		expect(invokeMock.mock.calls[0][1].prompt).toContain('Terms known from earlier recordings: Mumblum, ШІ.')
+	})
+
 	it('needs no AI for the free refiner', async () => {
 		invokeMock.mockReset()
 		expect(await refineDraft(['then Oleksii spoke'], [], DEFAULT_HINTS, DEFAULT_AI.connection)).toEqual(['Oleksii'])
@@ -71,9 +97,9 @@ describe('refineDraft', () => {
 describe('cliCommand', () => {
 	it('names the model only when it is a plain identifier', () => {
 		const connection = { ...DEFAULT_AI.connection, platform: 'cli' as const, cli: 'claude' as const }
-		expect(cliCommand({ ...connection, model: '' })).toBe('claude -p')
-		expect(cliCommand({ ...connection, model: 'haiku' })).toBe('claude -p --model haiku')
-		expect(cliCommand({ ...connection, model: 'haiku && rm -rf ~' })).toBe('claude -p')
+		expect(cliCommand({ ...connection, model: '' })).toBe(`claude -p ${LEAN}`)
+		expect(cliCommand({ ...connection, model: 'haiku' })).toBe(`claude -p --model haiku ${LEAN}`)
+		expect(cliCommand({ ...connection, model: 'haiku && rm -rf ~' })).toBe(`claude -p ${LEAN}`)
 		expect(cliCommand({ ...connection, cli: 'custom', cliCommand: ' my-ai --stdin ' })).toBe('my-ai --stdin')
 	})
 })

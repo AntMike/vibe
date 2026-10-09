@@ -19,6 +19,7 @@ import { fatalRunError, isGpuOutOfMemory, isUserError, serverErrorCodes } from '
 import { carrySpeakerNames, speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
 import { mergeRuns } from '~/lib/vote'
 import { extraPasses, hintOptions, type Hints } from './transcribe-hints'
+import { vocabularyPath } from '~/lib/vocabulary'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
 	notifyTranscriptsChanged,
@@ -449,6 +450,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 								connection: options.ai.connection,
 								userPrompt: options.modelOptions.init_prompt,
 								mainModelPath: current.modelPath,
+								vocabularyPath: options.hints.learn ? await vocabularyPath(current.projectsPath) : undefined,
 								loadModel: async (modelPath) => {
 									await invoke('load_model', {
 										modelPath,

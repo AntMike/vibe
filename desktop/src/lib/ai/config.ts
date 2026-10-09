@@ -40,7 +40,8 @@ export interface AiConnection {
 
 /** Each reads the prompt on stdin and prints only the answer; an empty model keeps the tool's own default. */
 const CLI_COMMANDS: Record<Exclude<AiCli, 'custom'>, (model: string) => string> = {
-	claude: (model) => `claude -p${model ? ` --model ${model}` : ''}`,
+	// Lean: no tools, MCP servers, settings, hooks or saved session — ~7k tokens a call instead of ~43k.
+	claude: (model) => `claude -p${model ? ` --model ${model}` : ''} --tools "" --strict-mcp-config --setting-sources "" --no-session-persistence`,
 	codex: (model) => `codex exec --skip-git-repo-check -s read-only --color never${model ? ` -m ${model}` : ''} -`,
 	gemini: (model) => `gemini${model ? ` -m ${model}` : ''}`,
 }

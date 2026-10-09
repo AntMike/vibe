@@ -35,6 +35,8 @@ pub struct TranscribeOptions {
     pub diarize_model: Option<String>,
     pub stable_timestamps: Option<bool>,
     pub vad_model: Option<String>,
+    /// Parakeet only: decode this many times over altered audio and keep the surest words.
+    pub draft_runs: Option<i32>,
 }
 
 pub(crate) const SERVER_DIED: &str = "vibe-server process died during transcription";

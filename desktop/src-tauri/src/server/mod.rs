@@ -260,6 +260,7 @@ impl ServerProcess {
             ("max_text_ctx", options.max_text_ctx),
             ("best_of", options.best_of),
             ("beam_size", options.beam_size),
+            ("draft_runs", options.draft_runs),
         ] {
             if let Some(value) = value.filter(|value| *value > 0) {
                 form = form.text(name, value.to_string());

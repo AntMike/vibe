@@ -15,6 +15,12 @@ export interface HintsSettings {
 	/** Model for the draft pass; null skips it. */
 	draftModelPath: string | null
 	refiner: HintsRefiner
+	/** The AI refiner's own model, or its own command when the AI connection is a custom CLI; empty uses the summary's. */
+	aiModel?: string
+	/** Draft passes to decode, each over slightly altered audio; the server keeps the surest word. */
+	draftRuns: number
+	/** Keep `vocabulary.json` beside the transcripts: learn terms from each recording, tell the AI the known ones. */
+	learn: boolean
 }
 
 export const DEFAULT_HINTS: HintsSettings = {
@@ -22,6 +28,8 @@ export const DEFAULT_HINTS: HintsSettings = {
 	callNames: true,
 	draftModelPath: null,
 	refiner: 'words',
+	draftRuns: 1,
+	learn: false,
 }
 
 /**
@@ -29,13 +37,13 @@ export const DEFAULT_HINTS: HintsSettings = {
  * Cyrillic runs about two characters a token, so this keeps a glossary whole in any script.
  */
 const MAX_PROMPT_CHARS = 400
-const MAX_TERMS = 50
+const MAX_TERMS = 40
 /** CLIs have big contexts; this only keeps an hours-long draft from becoming a huge stdin. */
 const CLI_CONTEXT_TOKENS = 100_000
 
 export const GLOSSARY_PROMPT = `Output only the requested content. No introductions, explanations, or commentary.
 
-Below is a rough automatic transcript of a recording; it has recognition mistakes. List the names of people, companies, products and places, and the specialized terms, that occur in it, spelled correctly and fixing obvious mishearings. Keep each term in the language and script it is spoken in. Known participants: {speakers}.
+Below is a rough automatic transcript of a recording; it has recognition mistakes. List the names of people, companies, products and places, and the specialized terms, that occur in it, spelled correctly and fixing obvious mishearings. Write each term the way it belongs in a transcript of the spoken language, never translated or transliterated: people's names and borrowed words that take the language's endings in its own script (Діма, префаб, спайн, колбек); only brand and product names in Latin (Figma, Unity, Claude). Skip everyday words. Include a term only when you can tell which real name, word or term it is; leave out garbled words you cannot resolve to one (a wrong term does more harm than a missing one). A person's name counts only when it is used as a name: someone addressed, or said to do something. Known participants: {speakers}. Terms known from earlier recordings: {known}. Spell a term as known when it is the same one, but list it only when it occurs in this transcript.
 
 Answer with one comma-separated line of at most ${MAX_TERMS} terms, most important first.
 
@@ -112,12 +120,22 @@ export function buildPrompt(terms: string[], userPrompt?: string): string {
 }
 
 /** Boil a draft transcript down to its glossary with the chosen refiner. */
-export async function refineDraft(lines: string[], names: string[], settings: HintsSettings, connection: AiConnection): Promise<string[]> {
+export async function refineDraft(
+	lines: string[],
+	names: string[],
+	settings: HintsSettings,
+	connection: AiConnection,
+	known: string[] = [],
+): Promise<string[]> {
 	if (settings.refiner === 'words') return rareWords(lines.join('\n'))
+	const own = settings.aiModel?.trim()
+	if (own) connection = connection.platform === 'cli' && connection.cli === 'custom' ? { ...connection, cliCommand: own } : { ...connection, model: own }
 	const contextTokens = connection.platform === 'cli' ? CLI_CONTEXT_TOKENS : connection.contextTokens
 	// ponytail: only the first context-full of a long draft; names past it rarely matter more than the opening's.
-	const transcript = chunkLines(lines, GLOSSARY_PROMPT, contextTokens)[0]
-	const prompt = fillPrompt(GLOSSARY_PROMPT, { transcript, speakers: names.join(', ') || 'unknown' })
+	// The known terms go in before chunking so a long list is counted against the draft's room.
+	const template = GLOSSARY_PROMPT.replace('{known}', () => known.join(', ') || 'none')
+	const transcript = chunkLines(lines, template, contextTokens)[0]
+	const prompt = fillPrompt(template, { transcript, speakers: names.join(', ') || 'unknown' })
 	// Unloaded right after when local: Whisper needs the GPU memory next.
 	return parseGlossary(await createClient(connection, { unloadAfter: true }).ask(prompt))
 }

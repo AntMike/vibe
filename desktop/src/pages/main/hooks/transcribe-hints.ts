@@ -5,6 +5,7 @@ import * as config from '~/lib/config'
 import { buildPrompt, refineDraft, type HintsSettings } from '~/lib/hints'
 import type { ModelMetadata } from '~/lib/model'
 import type { Segment, Transcript } from '~/lib/transcript'
+import { dropBlocked, knownTerms, learn, loadVocabulary, saveVocabulary, type Vocabulary } from '~/lib/vocabulary'
 
 export interface HintsRun {
 	settings: HintsSettings
@@ -12,6 +13,8 @@ export interface HintsRun {
 	/** The prompt the user typed in settings; the glossary goes after it. */
 	userPrompt?: string
 	mainModelPath: string
+	/** Where the learned vocabulary lives, when `settings.learn` is on. */
+	vocabularyPath?: string
 	/** Load a model on the server the way the queue loads the main one. */
 	loadModel: (path: string) => Promise<void>
 	isAborted: () => boolean
@@ -25,12 +28,12 @@ function callNames(turns: CallSpeakerTurn[] | undefined): string[] {
 	return [...seconds].sort((a, b) => b[1] - a[1]).map(([name]) => name)
 }
 
-/** One fast pass with the draft model. Leaves the draft model loaded. */
-async function draftSegments(path: string, draftModel: string, swap: boolean, run: HintsRun): Promise<Segment[]> {
+/** One fast pass with the draft model, decoded `runs` times over altered audio. Leaves the draft model loaded. */
+async function draftSegments(path: string, draftModel: string, swap: boolean, run: HintsRun, runs = 1): Promise<Segment[]> {
 	if (swap) await run.loadModel(draftModel)
 	const metadata = await invoke<ModelMetadata>('get_model_metadata', { modelPath: draftModel })
 	const vad = metadata.capabilities.requires_vad ? { vad_model: `${await invoke<string>('get_models_folder')}/${config.vadModelFilename}` } : {}
-	const draft = await invoke<Transcript>('transcribe', { options: { path, ...vad } })
+	const draft = await invoke<Transcript>('transcribe', { options: { path, ...vad, ...(runs > 1 ? { draft_runs: runs } : {}) } })
 	return draft.segments.filter((segment) => segment.text.trim())
 }
 
@@ -67,6 +70,24 @@ export async function extraPasses(
 	return runs
 }
 
+/** A missing or broken vocabulary only warns: a broken one is left alone for the user to fix. */
+async function readVocabulary(run: HintsRun): Promise<Vocabulary | null> {
+	try {
+		return await loadVocabulary(run.vocabularyPath!)
+	} catch (error) {
+		run.onWarning(message(error))
+		return null
+	}
+}
+
+async function writeVocabulary(run: HintsRun, vocabulary: Vocabulary) {
+	try {
+		await saveVocabulary(run.vocabularyPath!, vocabulary)
+	} catch (error) {
+		run.onWarning(message(error))
+	}
+}
+
 function message(error: unknown) {
 	return String(error instanceof Error ? error.message : ((error as { message?: string })?.message ?? error))
 }
@@ -79,13 +100,14 @@ function message(error: unknown) {
 // ponytail: swaps models twice per file; draft the whole queue first if batches of calls get slow.
 export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undefined, run: HintsRun): Promise<Hints> {
 	const names = run.settings.callNames ? callNames(turns) : []
+	const vocabulary = run.settings.learn && run.vocabularyPath ? await readVocabulary(run) : null
 	let terms: string[] = []
 	let draft: Segment[] = []
 	const draftModel = run.settings.draftModelPath
 	if (draftModel) {
 		const swap = draftModel !== run.mainModelPath
 		try {
-			draft = await draftSegments(path, draftModel, swap, run)
+			draft = await draftSegments(path, draftModel, swap, run, run.settings.draftRuns)
 		} catch (error) {
 			if (!run.isAborted()) run.onWarning(message(error))
 		}
@@ -97,6 +119,7 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 					names,
 					run.settings,
 					run.connection,
+					vocabulary ? knownTerms(vocabulary) : [],
 				)
 			} catch (error) {
 				run.onWarning(message(error))
@@ -104,7 +127,13 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 		}
 		if (swap) await run.loadModel(run.mainModelPath)
 	}
-	const prompt = buildPrompt([...names, ...terms], run.userPrompt)
+	if (vocabulary) {
+		terms = dropBlocked(vocabulary, terms)
+		// Only the AI's terms are learned: the capitalized-words refiner keeps too many mishearings.
+		if (run.settings.refiner !== 'words' && terms.length > 0) await writeVocabulary(run, learn(vocabulary, terms))
+	}
+	const pinned = vocabulary?.pinned ?? []
+	const prompt = buildPrompt([...names, ...pinned, ...terms], run.userPrompt)
 	const hinted = Boolean(prompt) && prompt !== run.userPrompt?.trim()
 	return { prompt: hinted ? { init_prompt: prompt, carry_prompt: true } : null, draft }
 }
