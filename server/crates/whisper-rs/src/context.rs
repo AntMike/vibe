@@ -51,7 +51,7 @@ impl Context {
     pub fn transcribe_stream(
         &mut self,
         samples: &[f32],
-        options: TranscribeOptions,
+        mut options: TranscribeOptions,
         mut callbacks: StreamCallbacks<'_>,
     ) -> Result<TranscribeResult> {
         if samples.is_empty() {
@@ -64,8 +64,25 @@ impl Context {
         }
         // detect_language alone asks for the language and no segments, which
         // the single-pass path already answers.
-        if !options.windows.is_empty() && !options.detect_language {
-            return transcribe_windows(&mut self.whisper, samples, options, callbacks);
+        if !options.detect_language {
+            // Whisper hears silence as speech: it invents a line for it ("Thanks
+            // for watching!") and then carries that line into the speech that
+            // follows, losing it. With a VAD at hand it only ever decodes speech.
+            if let Some(vad_model_path) = options.vad_model_path.as_deref() {
+                let mut vad = vad_rs::Vad::new(vad_model_path, vad_rs::Options::stable_timestamps())
+                    .map_err(|error| Error::Message(error.to_string()))?;
+                let speech = vad.segments(samples).map_err(|error| Error::Message(error.to_string()))?;
+                options.windows = speech_windows(&options.windows, &speech, samples.len());
+                if options.windows.is_empty() {
+                    if let Some(on_progress) = callbacks.on_progress.as_mut() {
+                        on_progress(100);
+                    }
+                    return Ok(TranscribeResult::default());
+                }
+            }
+            if !options.windows.is_empty() {
+                return transcribe_windows(&mut self.whisper, samples, options, callbacks);
+            }
         }
 
         let params = full_params(&options);
@@ -159,6 +176,50 @@ fn transcribe_stable_timestamps(
     }
 
     Ok(result)
+}
+
+/// Utterances are joined into one window up to this long, Whisper's own step;
+/// a single longer utterance stays whole, Whisper slides over it itself.
+const MAX_WINDOW_SAMPLES: usize = 30 * SAMPLE_RATE;
+/// A pause longer than this ends a window, so a long silence is never decoded.
+const MAX_GAP_SAMPLES: usize = 2 * SAMPLE_RATE;
+
+/// The speech in each window (the whole recording when there are none), as
+/// windows of at most 30 seconds with no long pause inside, in order.
+fn speech_windows(windows: &[Window], speech: &[vad_rs::SpeechSegment], len: usize) -> Vec<Window> {
+    let whole = [Window {
+        start_sample: 0,
+        end_sample: len,
+        group: 0,
+    }];
+    let windows = if windows.is_empty() { &whole[..] } else { windows };
+    let mut out: Vec<Window> = Vec::new();
+    // ponytail: n*m scan; both lists are sorted and short (hundreds at most).
+    for window in windows {
+        for segment in speech {
+            let start = segment.start_sample.max(window.start_sample);
+            let end = segment.end_sample.min(window.end_sample);
+            if end <= start {
+                continue;
+            }
+            match out.last_mut() {
+                Some(last)
+                    if last.group == window.group
+                        && start >= last.end_sample
+                        && start - last.end_sample <= MAX_GAP_SAMPLES
+                        && end - last.start_sample <= MAX_WINDOW_SAMPLES =>
+                {
+                    last.end_sample = end;
+                }
+                _ => out.push(Window {
+                    start_sample: start,
+                    end_sample: end,
+                    group: window.group,
+                }),
+            }
+        }
+    }
+    out
 }
 
 /// Share of the progress bar spent detecting window languages before decoding.
@@ -492,6 +553,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn speech_windows_keep_speech_only_and_split_on_long_pauses() {
+        let secs = |s: usize| s * SAMPLE_RATE;
+        let speech = |start, end| vad_rs::SpeechSegment {
+            start_sample: secs(start),
+            end_sample: secs(end),
+        };
+        let window = |start, end, group| Window {
+            start_sample: secs(start),
+            end_sample: secs(end),
+            group,
+        };
+        // Silence for 28 s, then speech with a short pause, a long pause, and a 40 s utterance.
+        let heard = [speech(28, 30), speech(31, 35), speech(40, 60), speech(60, 100)];
+        assert_eq!(
+            speech_windows(&[], &heard, secs(100)),
+            vec![window(28, 35, 0), window(40, 60, 0), window(60, 100, 0)]
+        );
+        // Speaker turns cut the speech; silence inside a turn is dropped.
+        assert_eq!(
+            speech_windows(&[window(0, 33, 1), window(33, 100, 2)], &heard, secs(100)),
+            vec![window(28, 33, 1), window(33, 35, 2), window(40, 60, 2), window(60, 100, 2)]
+        );
+        assert!(speech_windows(&[], &[], secs(10)).is_empty());
     }
 
     #[test]
