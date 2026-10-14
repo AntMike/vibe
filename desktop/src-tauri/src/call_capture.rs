@@ -385,7 +385,11 @@ mod slack {
 
     /// Run `setup` until it works or `keep_trying` says no: creating the UI Automation client
     /// failed once with E_FAIL right after the app started, and that lost a whole session's names.
-    pub(super) fn retry<T>(what: &str, keep_trying: impl Fn() -> bool, setup: impl Fn() -> windows::core::Result<T>) -> windows::core::Result<T> {
+    pub(super) fn retry<T>(
+        what: &str,
+        keep_trying: impl Fn() -> bool,
+        setup: impl Fn() -> windows::core::Result<T>,
+    ) -> windows::core::Result<T> {
         loop {
             match setup() {
                 Err(error) if keep_trying() => {
@@ -405,9 +409,11 @@ mod slack {
 
     fn run(stop: &AtomicBool, pid: u32) -> windows::core::Result<()> {
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
-        let uia: IUIAutomation = retry("slack mute watch setup", || !stop.load(Ordering::Relaxed), || unsafe {
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-        })?;
+        let uia: IUIAutomation = retry(
+            "slack mute watch setup",
+            || !stop.load(Ordering::Relaxed),
+            || unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) },
+        )?;
         let mut button: Option<IUIAutomationElement> = None;
         let mut logged = false;
         while !stop.load(Ordering::Relaxed) {
@@ -477,10 +483,14 @@ mod slack {
     /// `active_speaker`. That child has no name, so only the raw view shows it, not FindAll.
     pub fn watch_speakers(stop: &AtomicBool, pid: u32, mut on_sample: impl FnMut(&[String])) -> windows::core::Result<()> {
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
-        let walker = retry("slack speaker watch setup", || !stop.load(Ordering::Relaxed), || unsafe {
-            let uia: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
-            uia.RawViewWalker()
-        })?;
+        let walker = retry(
+            "slack speaker watch setup",
+            || !stop.load(Ordering::Relaxed),
+            || unsafe {
+                let uia: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+                uia.RawViewWalker()
+            },
+        )?;
         // Searching Slack's window for tiles takes seconds in a long huddle. Inline, it held up
         // sampling, so turns came out ~17 s coarse and short replies went to the previous speaker.
         let (send, found) = mpsc::channel();
@@ -511,9 +521,11 @@ mod slack {
         let scan = || -> windows::core::Result<()> {
             unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
             // An empty send is harmless and tells us whether the sampler is still listening.
-            let uia: IUIAutomation = retry("slack tile scan setup", || send.send(Tiles(Vec::new())).is_ok(), || unsafe {
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-            })?;
+            let uia: IUIAutomation = retry(
+                "slack tile scan setup",
+                || send.send(Tiles(Vec::new())).is_ok(),
+                || unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) },
+            )?;
             let mut count = None;
             loop {
                 let started = Instant::now();
@@ -581,10 +593,14 @@ mod tests {
     #[test]
     fn retry_until_allowed() {
         let calls = std::cell::Cell::new(0);
-        let result = retry("x", || calls.get() < 3, || {
-            calls.set(calls.get() + 1);
-            Err::<(), _>(windows::core::Error::from_hresult(windows::core::HRESULT(-1)))
-        });
+        let result = retry(
+            "x",
+            || calls.get() < 3,
+            || {
+                calls.set(calls.get() + 1);
+                Err::<(), _>(windows::core::Error::from_hresult(windows::core::HRESULT(-1)))
+            },
+        );
         assert!(result.is_err());
         assert_eq!(calls.get(), 3);
         assert_eq!(retry("x", || false, || Ok::<_, windows::core::Error>(7)).unwrap(), 7);
