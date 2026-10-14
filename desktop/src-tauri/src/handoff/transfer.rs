@@ -179,15 +179,6 @@ impl HandoffHandler {
             None | Some(protocol::OP_TRANSCRIBE) => self.handle_transcribe(send, recv, header).await,
             Some(protocol::OP_CAPABILITIES) => {
                 let event = self.capabilities().await;
-                // Counts PWA page loads rather than people — see the note on
-                // `HANDOFF_CAPABILITIES`. `model_loaded` is the useful part: it
-                // shows how often someone opens the phone app with nothing ready.
-                let model_loaded = matches!(event, HandoffEvent::Capabilities { model_loaded: true, .. });
-                crate::analytics::track_event_handle_with_props(
-                    &self.app_handle,
-                    crate::analytics::events::HANDOFF_CAPABILITIES,
-                    Some(serde_json::json!({ "model_loaded": model_loaded })),
-                );
                 // Exactly one line, then the caller finishes the stream.
                 write_event(send, &event).await?;
                 Ok(())

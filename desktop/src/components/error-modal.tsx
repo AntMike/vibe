@@ -1,11 +1,9 @@
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { m } from '~/paraglide/messages.js'
 import { ReactComponent as CopyIcon } from '~/icons/copy.svg'
 import { ModifyState } from '~/lib/types'
-import { getIssueUrl, resetApp } from '~/lib/app'
+import { resetApp } from '~/lib/app'
 import { ErrorModalState } from '~/providers/error-modal'
 import * as clipboard from '@tauri-apps/plugin-clipboard-manager'
-import { collectLogs } from '~/lib/logs'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '~/components/ui/dialog'
 import { Button } from '~/components/ui/button'
 import { Textarea } from '~/components/ui/textarea'
@@ -19,18 +17,6 @@ export default function ErrorModal({ state, setState }: ErrorModalProps) {
 	async function clearLogAndReset() {
 		setState({ open: false, log: '' })
 		resetApp()
-	}
-	async function reportIssue() {
-		let info = ''
-		try {
-			info = await collectLogs()
-		} catch (e) {
-			console.error(e)
-			info = `Couldn't get info: ${e}`
-		}
-
-		const url = await getIssueUrl(state?.log + '\n' + info)
-		openUrl(url)
 	}
 
 	return (
@@ -49,9 +35,6 @@ export default function ErrorModal({ state, setState }: ErrorModalProps) {
 				</div>
 				<div className="flex justify-center gap-3 mt-3">
 					<Button onClick={clearLogAndReset}>{m.resetApp()}</Button>
-					<Button variant="outline" onMouseDown={reportIssue}>
-						{m.reportIssue()}
-					</Button>
 				</div>
 				<DialogFooter>
 					<Button variant="secondary" onClick={() => setState?.({ log: '', open: false })}>

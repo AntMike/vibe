@@ -10,7 +10,7 @@ Vibe is a desktop transcription app built with **Tauri** (Rust + TypeScript fron
 
 - **Frontend**: TypeScript + React (UI)
 - **Backend**: Rust/Tauri (`desktop/src-tauri/`)
-- Handles UI, file management, settings, analytics
+- Handles UI, file management, settings
 - Spawns and communicates with the server via local HTTP
 
 ### Server (`server/`)

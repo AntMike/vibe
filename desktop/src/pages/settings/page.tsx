@@ -3,14 +3,12 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { m } from '~/paraglide/messages.js'
 import {
 	ArrowLeft,
-	ArrowUpRight,
 	Bell,
 	Bot,
 	Cpu,
 	Globe,
 	Keyboard,
 	Mic,
-	ShieldCheck,
 	SlidersHorizontal,
 	Smartphone,
 	Sparkles,
@@ -18,9 +16,6 @@ import {
 	Wrench,
 	X,
 } from 'lucide-react'
-import { openUrl } from '@tauri-apps/plugin-opener'
-import * as config from '~/lib/config'
-import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import { ModifyState } from '~/lib/types'
 import { viewModel } from './view-model'
 import { Button } from '~/components/ui/button'
@@ -32,7 +27,6 @@ import { GeneralSection } from './sections/general'
 import { ModelsSection } from './sections/models'
 import { NotificationsSection } from './sections/notifications'
 import { PhoneSection } from './sections/phone'
-import { PrivacySection } from './sections/privacy'
 import { RecordingSection } from './sections/recording'
 import { AiSection, type AiTaskId } from './sections/ai'
 import { AiPromptSection } from './sections/ai-prompt'
@@ -56,7 +50,6 @@ type SectionId =
 	| 'dictation'
 	| 'phone'
 	| 'api'
-	| 'privacy'
 	| 'advanced'
 
 type Subpage = 'auto-export' | 'ai-summary' | 'ai-dictation' | 'whisper-options' | 'phone-pairing'
@@ -76,7 +69,6 @@ export default function SettingsPage({ setVisible, scrollTo }: SettingsPageProps
 	const groups: SettingsGroup[] = [
 		[
 			{ id: 'general', label: m.general(), icon: <Globe className="h-4 w-4" /> },
-			{ id: 'privacy', label: m.privacy(), icon: <ShieldCheck className="h-4 w-4" /> },
 		],
 		[
 			{ id: 'transcription', label: m.transcription(), icon: <SlidersHorizontal className="h-4 w-4" /> },
@@ -181,24 +173,8 @@ export default function SettingsPage({ setVisible, scrollTo }: SettingsPageProps
 							</div>
 						))}
 					</nav>
-					{/* The version is also the way into its own release notes — one line, not two affordances. */}
 					<div className="mt-2 border-t border-border/55 pt-3">
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									onClick={() => openUrl(config.changelogURL(vm.appVersionNumber))}
-									className="group flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60 transition-colors hover:text-foreground">
-									<span className="truncate">{vm.appVersion}</span>
-									<ArrowUpRight
-										aria-hidden="true"
-										className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-										strokeWidth={2}
-									/>
-								</button>
-							</TooltipTrigger>
-							<TooltipContent side="top">{m.whatsNew()}</TooltipContent>
-						</Tooltip>
+						<span className="block truncate px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">{vm.appVersion}</span>
 					</div>
 				</div>
 
@@ -259,7 +235,6 @@ export default function SettingsPage({ setVisible, scrollTo }: SettingsPageProps
 
 							{!subpage && activeSection === 'api' && <ApiSection vm={vm} />}
 
-							{!subpage && activeSection === 'privacy' && <PrivacySection vm={vm} />}
 
 							{!subpage && activeSection === 'advanced' && <AdvancedSection vm={vm} />}
 						</div>

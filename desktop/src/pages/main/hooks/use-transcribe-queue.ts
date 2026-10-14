@@ -6,7 +6,6 @@ import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import successSound from '~/assets/success.mp3'
 import { m } from '~/paraglide/messages.js'
-import { trackGpuOutOfMemory, trackTranscribeCancelled, trackTranscribeFailed, trackTranscribeStarted, trackTranscribeSucceeded } from '~/lib/analytics'
 import * as config from '~/lib/config'
 import { KEEP_AWAKE, startKeepAwake, stopKeepAwake } from '~/lib/keep-awake'
 import { validPath } from '~/lib/media'
@@ -15,7 +14,7 @@ import { openPath } from '~/lib/app'
 import { notify } from '~/lib/notify'
 import { autoProjectName } from '~/lib/project-name'
 import { gpuOutOfMemoryBefore, rememberGpuOutOfMemory } from '~/lib/gpu-memory'
-import { fatalRunError, isGpuOutOfMemory, isUserError, serverErrorCodes } from '~/lib/server-errors'
+import { fatalRunError, isGpuOutOfMemory, isUserError } from '~/lib/server-errors'
 import { carrySpeakerNames, speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
 import { mergeRuns } from '~/lib/vote'
 import { extraPasses, hintOptions, type Hints } from './transcribe-hints'
@@ -438,7 +437,6 @@ export function useTranscribeQueue(): TranscribeQueue {
 				abortCurrentRef.current = false
 
 				const startedAt = performance.now()
-				trackTranscribeStarted('main', next.path)
 				try {
 					const options = preferenceRef.current
 					let hints: Hints | null = null
@@ -530,22 +528,14 @@ export function useTranscribeQueue(): TranscribeQueue {
 						persist({ ...next, speakerNames }, segments)
 					}
 					if (!abortCurrentRef.current && !abortAllRef.current) void autoExportJob({ ...next, speakerNames }, segments)
-					// An abort resolves as a success carrying the partial segments, so only these flags tell them apart.
-					if (abortCurrentRef.current || abortAllRef.current) {
-						trackTranscribeCancelled('main', next.path)
-					} else {
-						trackTranscribeSucceeded('main', { durationSeconds: seconds, segmentsCount: result.segments.length })
-					}
 				} catch (error) {
 					if (abortCurrentRef.current || abortAllRef.current) {
 						patch(next.id, { status: 'cancelled', progress: 0 })
-						trackTranscribeCancelled('main', next.path)
 					} else {
 						const { code, message } = errorParts(error)
 						if (!onCpu && isGpuOutOfMemory(code, message) && (await reloadOnCpu(current))) {
 							onCpu = true
 							rememberGpuOutOfMemory(current.modelPath)
-							trackGpuOutOfMemory('main', { signal: code === serverErrorCodes.GPU_OUT_OF_MEMORY ? 'error_code' : 'process_death' })
 							toast.warning(m.gpuFallbackToCpu(), { position: 'bottom-center', duration: 8000 })
 							// Back to the queue for one more try; on the CPU an overflow is the plain error.
 							patch(next.id, { status: 'queued', progress: 0 })
@@ -553,7 +543,6 @@ export function useTranscribeQueue(): TranscribeQueue {
 						}
 						patch(next.id, { status: 'error', progress: 0, error: message })
 						const userError = Boolean(code && isUserError(code))
-						trackTranscribeFailed('main', next.path, { errorMessage: message, userError })
 						if (userError) {
 							toast.error(`${m.error()}: ${message}`, { position: 'bottom-center' })
 						} else {

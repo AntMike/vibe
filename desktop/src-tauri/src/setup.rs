@@ -1,7 +1,6 @@
 use crate::{
     cli::{self, is_cli_detected},
     config::STORE_FILENAME,
-    diagnostics::get_issue_url,
     error::LogError,
     server::ServerProcess,
 };
@@ -10,7 +9,7 @@ use once_cell::sync::Lazy;
 use std::fs;
 use tauri::{App, Manager};
 use tauri_plugin_autostart::ManagerExt;
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
 
@@ -88,12 +87,10 @@ pub fn setup(app: &App) -> Result<(), Box<dyn std::error::Error>> {
             if let Some(app_handle) = STATIC_APP.lock().expect("lock").as_ref() {
                 app_handle
                     .dialog()
-                    .message("App crashed with error. Please register to Github and then click report.")
+                    .message("App crashed. The details are in the log.")
                     .kind(tauri_plugin_dialog::MessageDialogKind::Error)
                     .title("Vibe Crashed")
-                    .buttons(MessageDialogButtons::OkCustom("Report".into()))
                     .show(|_| {});
-                let _ = tauri_plugin_opener::open_url(get_issue_url(format!("{:?}", info)), None::<&str>);
             }
 
             crash_handler::CrashEventResult::Handled(true)

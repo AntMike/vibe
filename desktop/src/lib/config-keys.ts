@@ -13,7 +13,6 @@ export const CONFIG_KEYS = {
 	skippedSetup: 'general.skippedSetup',
 	closeToTray: 'general.closeToTray',
 	preventSleep: 'general.preventSleep',
-	analyticsEnabled: 'analytics_enabled',
 
 	// Model
 	modelPath: 'model.path',

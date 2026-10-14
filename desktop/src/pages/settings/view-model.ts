@@ -8,7 +8,7 @@ import { toast } from 'sonner'
 import * as clipboard from '@tauri-apps/plugin-clipboard-manager'
 import * as config from '~/lib/config'
 import { NamedPath } from '~/lib/types'
-import { getIssueUrl, resetApp } from '~/lib/app'
+import { resetApp } from '~/lib/app'
 import { usePreferenceProvider } from '~/providers/preference'
 import { useModelGates } from '~/providers/model-gates'
 import { useToastProvider } from '~/providers/toast'
@@ -17,7 +17,7 @@ import { UnlistenFn, listen } from '@tauri-apps/api/event'
 import { useNavigate } from 'react-router-dom'
 import { load } from '@tauri-apps/plugin-store'
 import { useStoreValue } from '~/lib/use-store-value'
-import { collectLogs, getPrettyVersion, getVersionNumber } from '~/lib/logs'
+import { getPrettyVersion } from '~/lib/logs'
 import { cleanupPartialDownloads, listInstalledModels, type InstalledModel } from '~/lib/model'
 import { buildSkill, installSkill, type SkillTarget } from '~/lib/skill'
 
@@ -39,40 +39,6 @@ async function openSelectedModel(path: string | null) {
 
 async function openModelsUrl() {
 	openUrl(config.modelsDocURL)
-}
-
-async function reportIssue() {
-	try {
-		let info = await collectLogs()
-
-		const logs: string = await invoke<string>('get_logs')
-		const filteredLogs = logs
-			.split('\n')
-			.filter((l) => l.toLowerCase().includes('error')) // Filter lines with "debug"
-			.slice(-10) // Take the last 3 lines
-			.map((line) => {
-				try {
-					const parsed = JSON.parse(line) // Deserialize JSON
-					return parsed?.fields?.message || 'No message found' // Extract .message or fallback
-				} catch (e) {
-					return 'Invalid JSON' // Handle invalid JSON
-				}
-			})
-			.join('\n')
-		const templatedLogs = `<details>
-<summary>logs</summary>
-
-\`\`\`console
-${filteredLogs}
-\`\`\`
-</details>
-`
-		info += `\n\n\n${templatedLogs}`
-		openUrl(await getIssueUrl(info))
-	} catch (e) {
-		console.error(e)
-		openUrl(await getIssueUrl(`Couldn't get info ${e}`))
-	}
 }
 
 async function revealLogs() {
@@ -102,7 +68,6 @@ export function viewModel() {
 	const [models, setModels] = useState<NamedPath[]>([])
 	const [corruptModels, setCorruptModels] = useState<InstalledModel[]>([])
 	const [appVersion, setAppVersion] = useState('')
-	const [appVersionNumber, setAppVersionNumber] = useState('')
 	const [defaultProjectsPath, setDefaultProjectsPath] = useState<string>('')
 	const preference = usePreferenceProvider()
 	const listenersRef = useRef<UnlistenFn[]>([])
@@ -164,7 +129,6 @@ export function viewModel() {
 		try {
 			const prettyVersion = await getPrettyVersion()
 			setAppVersion(prettyVersion)
-			setAppVersionNumber(await getVersionNumber())
 		} catch (e) {
 			console.error(e)
 		}
@@ -361,8 +325,6 @@ export function viewModel() {
 		corruptModels,
 		redownloadModel,
 		appVersion,
-		appVersionNumber,
-		reportIssue,
 		loadModels,
 		selectModel: modelGates.selectModel,
 		changeModelsFolder,

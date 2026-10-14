@@ -3,8 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import * as pathApi from '@tauri-apps/api/path'
 import * as dialog from '@tauri-apps/plugin-dialog'
 import * as fs from '@tauri-apps/plugin-fs'
-import { Download, MoreHorizontal, Plus, Search, Settings, Smartphone } from 'lucide-react'
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { MoreHorizontal, Plus, Search, Settings, Smartphone } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { m } from '~/paraglide/messages.js'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '~/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
@@ -22,7 +22,6 @@ import {
 import { openSettingsSection } from '~/lib/app'
 import { TOGGLE_SIDEBAR_EVENT } from '~/components/layout'
 import { getTextDirection } from '~/paraglide/runtime.js'
-import { UpdaterContext } from '~/providers/updater'
 import { Spinner } from '~/components/ui/spinner'
 import { useSession } from '../session'
 import RetranscribeDialog from './retranscribe-dialog'
@@ -383,7 +382,6 @@ function RecentsList({
 
 export default function RecentsSidebar() {
 	const { queue, startNew, preference } = useSession()
-	const { updateApp, availableUpdate } = useContext(UpdaterContext)
 	const { width, dragging, handleProps } = useResizableWidth()
 	const [entries, setEntries] = useState<TranscriptEntry[]>([])
 	const [query, setQuery] = useState('')
@@ -484,7 +482,7 @@ export default function RecentsSidebar() {
 				/>
 			)}
 
-			{/* Footer, ChatGPT-style: Settings row with a small update badge when one is waiting. */}
+			{/* Footer, ChatGPT-style: Settings row. */}
 			<div className="mt-auto border-t border-border/60 p-2">
 				<div className="flex items-center gap-1">
 					<button
@@ -506,20 +504,6 @@ export default function RecentsSidebar() {
 						</TooltipTrigger>
 						<TooltipContent side="top">{m.phone()}</TooltipContent>
 					</Tooltip>
-					{availableUpdate && (
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									aria-label={m.updateVersion()}
-									onClick={updateApp}
-									className="me-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity duration-150 hover:opacity-90">
-									<Download className="h-3.5 w-3.5" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent side="top">{m.updateVersion()}</TooltipContent>
-						</Tooltip>
-					)}
 				</div>
 			</div>
 

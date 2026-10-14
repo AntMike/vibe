@@ -1,7 +1,6 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod analytics;
 mod cleaner;
 mod cli;
 mod cmd;
@@ -37,9 +36,6 @@ use tauri_plugin_window_state::StateFlags;
 
 use error::LogError;
 
-/// Guards the clean-exit event: `ExitRequested` and `Exit` both fire on a quit.
-static EXIT_REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Attach console in Windows:
@@ -61,8 +57,6 @@ async fn main() -> Result<()> {
         }))
         .setup(|app| {
             setup::setup(app)?;
-            analytics::track_event(app, analytics::events::APP_STARTED);
-
             Ok(())
         })
         .plugin(
@@ -76,7 +70,6 @@ async fn main() -> Result<()> {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::default().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
@@ -88,18 +81,6 @@ async fn main() -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         builder = builder.plugin(tauri_nspanel::init());
-    }
-
-    if analytics::is_aptabase_configured() {
-        let options = tauri_plugin_aptabase::InitOptions {
-            host: Some(analytics::APTABASE_BASE_URL.to_string()),
-            ..Default::default()
-        };
-        builder = builder.plugin(
-            tauri_plugin_aptabase::Builder::new(analytics::APTABASE_APP_KEY)
-                .with_options(options)
-                .build(),
-        );
     }
 
     let app = builder
@@ -132,7 +113,6 @@ async fn main() -> Result<()> {
             cmd::server_cmd::get_api_base_url,
             cmd::server_cmd::start_api_server,
             cmd::server_cmd::stop_api_server,
-            cmd::app::track_analytics_event,
             cmd::app::get_commit_hash,
             cmd::app::is_avx2_enabled,
             cmd::app::is_online,
@@ -191,14 +171,6 @@ async fn main() -> Result<()> {
             }
         }
         tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
-            // Both events fire on a normal quit (and the tray's `app.exit(0)` bypasses the
-            // webview entirely), so report the clean exit exactly once, from whichever
-            // arrives first. Nothing here prevents the exit, so this is never a false signal.
-            if !EXIT_REPORTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                analytics::track_event_handle(app, analytics::events::APP_EXITED);
-                // Bounded: a slow or unreachable ingest host must not hold up quitting.
-                analytics::flush_events_bounded(app, std::time::Duration::from_secs(2));
-            }
             // A base URL left in the config file would point an agent at a dead port.
             cmd::config::set_api_base_url(app, None).log_error();
             let mutex = app.state::<tokio::sync::Mutex<setup::ServerState>>();

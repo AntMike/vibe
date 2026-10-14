@@ -34,7 +34,7 @@ pub const CONFIG_KEY_HANDOFF_ENABLED: &str = "handoff.enabled";
 ///   1. `VIBE_PWA_ORIGIN` in the environment at run time — for `just dev` and for
 ///      pointing a real phone at a tunnel.
 ///   2. `VIBE_PWA_ORIGIN` at compile time — lets a release build bake a different
-///      origin, the same way `APTABASE_APP_KEY` is baked in `analytics.rs`.
+///      origin.
 ///   3. This constant.
 pub const DEFAULT_PWA_ORIGIN: &str = match option_env!("VIBE_PWA_ORIGIN") {
     Some(value) => value,

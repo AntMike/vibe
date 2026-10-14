@@ -1,13 +1,12 @@
 import { PanelLeft } from 'lucide-react'
 import { platform } from '@tauri-apps/plugin-os'
-import { ReactNode, useContext, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { getTextDirection } from '~/paraglide/runtime.js'
 import { m } from '~/paraglide/messages.js'
 import { Button } from '~/components/ui/button'
 import { cn } from '~/lib/style'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
-import { UpdaterContext } from '~/providers/updater'
 import SettingsModal from './settings-modal'
 import PageTransition from './page-transition'
 import ModelDownloadPrompt from './model-download-prompt'
@@ -33,50 +32,20 @@ export function isMacOverlayTitlebar(): boolean {
 	}
 }
 
-/** Mirrors the sidebar state the main page keeps, so the toggle knows whether the panel is showing. */
-function useSidebarExpanded() {
-	const [expanded, setExpanded] = useState(() => {
-		try {
-			// Open by default: only an explicit collapse keeps it shut.
-			return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) !== 'collapsed'
-		} catch {
-			return true
-		}
-	})
-
-	useEffect(() => {
-		function toggle() {
-			setExpanded((previous) => !previous)
-		}
-		window.addEventListener(TOGGLE_SIDEBAR_EVENT, toggle)
-		return () => window.removeEventListener(TOGGLE_SIDEBAR_EVENT, toggle)
-	}, [])
-
-	return expanded
-}
-
 export function SidebarToggleButton() {
-	const { availableUpdate } = useContext(UpdaterContext)
-	const expanded = useSidebarExpanded()
-	// While the sidebar is open its footer already carries the update button; the dot would double up.
-	const hint = availableUpdate && !expanded
-
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<Button
 					variant="ghost"
 					size="icon"
-					aria-label={hint ? m.updateAvailableOpenRecents() : m.toggleRecents()}
+					aria-label={m.toggleRecents()}
 					className="relative h-9 w-9 rounded-full text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground [&_svg]:size-[18px]"
 					onClick={() => window.dispatchEvent(new CustomEvent(TOGGLE_SIDEBAR_EVENT))}>
 					<PanelLeft strokeWidth={1.75} />
-					{hint && (
-						<span aria-hidden className="absolute end-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-background motion-safe:animate-pulse" />
-					)}
 				</Button>
 			</TooltipTrigger>
-			<TooltipContent>{hint ? m.updateAvailableOpenRecents() : m.toggleRecents()}</TooltipContent>
+			<TooltipContent>{m.toggleRecents()}</TooltipContent>
 		</Tooltip>
 	)
 }

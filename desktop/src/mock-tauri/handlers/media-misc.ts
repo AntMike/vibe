@@ -205,8 +205,6 @@ export const mediaMiscHandlers: CommandHandlerMap = {
 		console.info('[mock] open_microphone_settings')
 	},
 
-	track_analytics_event: () => undefined,
-
 	// --- Dictation indicator ----------------------------------------------------
 
 	get_dictation_indicator_enabled: () => dictationIndicatorEnabled,

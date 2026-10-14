@@ -53,7 +53,6 @@ pub async fn handoff_start(
     if guard.is_none() {
         let state = handoff::spawn(app_handle.clone()).await?;
         tracing::info!("handoff started: {}", state.endpoint_id());
-        crate::analytics::track_event_handle(&app_handle, crate::analytics::events::HANDOFF_ENABLED);
         handoff::set_enabled(&app_handle, true);
         *guard = Some(state);
     }
@@ -67,7 +66,6 @@ pub async fn handoff_stop(app_handle: tauri::AppHandle, runtime: State<'_, Hando
     if let Some(state) = guard.take() {
         state.shutdown().await;
         tracing::info!("handoff stopped");
-        crate::analytics::track_event_handle(&app_handle, crate::analytics::events::HANDOFF_DISABLED);
     }
     Ok(())
 }
@@ -80,11 +78,6 @@ pub async fn handoff_regenerate_token(
 ) -> Result<HandoffStatus, CommandError> {
     let guard = runtime.lock().await;
     devices::refresh_invitation(&app_handle)?;
-    crate::analytics::track_event_handle_with_props(
-        &app_handle,
-        crate::analytics::events::HANDOFF_PAIRING_REGENERATED,
-        Some(serde_json::json!({ "was_running": guard.is_some() })),
-    );
     HandoffStatus::snapshot(&app_handle, guard.as_ref())
 }
 

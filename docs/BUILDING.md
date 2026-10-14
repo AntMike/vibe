@@ -95,8 +95,6 @@ chore check-i18n   # translation coverage against en-US
 
 It will create releases for `Windows`, `Linux`, and `macOS`
 
-Along with `latest.json` file (used for auto updater).
-
 When `Release` action finishes, it will run `Deploy landing` action
 
 and update downloads links in landing page.
@@ -182,15 +180,6 @@ Then delete the local files:
 
 ```console
 rm key.pem cert.pem cert.pfx
-```
-
-## Analytics (Optional)
-
-Vibe uses [Aptabase](https://aptabase.com/) for analytics. Not required for development. To enable, set these env vars at build time:
-
-```console
-export APTABASE_APP_KEY="A-..."
-export APTABASE_BASE_URL="https://..."
 ```
 
 ## Gotchas

@@ -16,7 +16,6 @@ export interface SettingsFile {
 const LOCAL_KEYS = new Set<string>([
 	CONFIG_KEYS.firstRun,
 	CONFIG_KEYS.skippedSetup,
-	CONFIG_KEYS.analyticsEnabled,
 	CONFIG_KEYS.modelPath,
 	CONFIG_KEYS.modelDisplayNames,
 	CONFIG_KEYS.gpuDevice,

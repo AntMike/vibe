@@ -1,6 +1,5 @@
 //! The transcribe op: receive the phone's audio, load the user's model, run it
-//! through Server and stream the transcript back — plus the one analytics event
-//! every attempt reports.
+//! through Server and stream the transcript back.
 //!
 //! Split out of [`super::transfer`], which owns the connection itself: the
 //! token check, op dispatch, and the wire helpers this module writes through.
@@ -42,85 +41,30 @@ fn required_vad_model(requires_vad: bool, models_folder: &std::path::Path) -> Re
 }
 
 impl HandoffHandler {
-    /// The transcribe op. Wraps [`HandoffHandler::run_transcribe`] so that every
-    /// outcome — including a transfer that dies partway — reports exactly one
-    /// `handoff_transcribe` event. Without this the dataset would only ever see
-    /// successes and the feature would look healthier than it is.
+    /// The transcribe op.
     pub(super) async fn handle_transcribe(
         &self,
         send: &mut iroh::endpoint::SendStream,
         recv: &mut iroh::endpoint::RecvStream,
         header: HandoffHeader,
     ) -> Result<(), TransferError> {
-        let started = std::time::Instant::now();
-        let mut stats = TransferStats::default();
-        let result = self.run_transcribe(send, recv, &header, &mut stats).await;
-        self.track_transcribe(&header, &stats, started.elapsed(), &result);
-        result
-    }
-
-    /// One `handoff_transcribe` per transfer. Technical facts only: no transcript,
-    /// no filename, no saved path, no model path, and the chosen language is
-    /// reduced to whether one was chosen at all.
-    fn track_transcribe(
-        &self,
-        header: &HandoffHeader,
-        stats: &TransferStats,
-        elapsed: std::time::Duration,
-        result: &Result<(), TransferError>,
-    ) {
-        let mut props = serde_json::json!({
-            "success": result.is_ok(),
-            "audio_size_bucket": size_bucket(stats.audio_bytes),
-            // Whole operation: receive + model load + transcription.
-            "duration_sec": elapsed.as_secs(),
-            // Whether a language was picked, never which one.
-            "auto_detect": header.lang.is_none(),
-            "translate": header.translate.unwrap_or(false),
-        });
-        if let Some(seconds) = stats.transcribe_sec {
-            props["transcribe_duration_sec"] = seconds.into();
-        }
-        if let Some(ref model_name) = stats.model_name {
-            props["model_name"] = model_name.as_str().into();
-        }
-        if let Err(ref failure) = *result {
-            props["error_code"] = failure.code.as_str().into();
-        }
-        crate::analytics::track_event_handle_with_props(
-            &self.app_handle,
-            crate::analytics::events::HANDOFF_TRANSCRIBE,
-            Some(props),
-        );
-    }
-
-    async fn run_transcribe(
-        &self,
-        send: &mut iroh::endpoint::SendStream,
-        recv: &mut iroh::endpoint::RecvStream,
-        header: &HandoffHeader,
-        stats: &mut TransferStats,
-    ) -> Result<(), TransferError> {
         write_event(send, &HandoffEvent::Accepted).await?;
         self.emit_activity("receiving", None);
 
         // The recording exists nowhere but the phone until this point, so it is
         // kept like any other Vibe recording rather than deleted after use.
-        let (audio_path, audio_bytes) = receive_audio(recv, header.filename.as_deref()).await?;
-        stats.audio_bytes = Some(audio_bytes);
+        let (audio_path, _) = receive_audio(recv, header.filename.as_deref()).await?;
         let saved_path = audio_path.to_string_lossy().to_string();
         tracing::info!("handoff saved phone recording to {}", saved_path);
 
         // A failed transcription leaves the file in place on purpose: the audio is
         // complete and is the only copy, so the user can retry from the desktop.
         // Only a truncated or rejected transfer is deleted, inside `receive_audio`.
-        self.transcribe(send, &audio_path, header, saved_path.clone(), stats).await?;
+        let completion = self.transcribe(send, &audio_path, &header, saved_path.clone()).await?;
 
         // The frontend decides whether to keep it — it owns the
         // `transcription.saveTranscripts` preference.
-        if let Some(completion) = stats.completion.take() {
-            self.emit_done(completion);
-        }
+        self.emit_done(completion);
         Ok(())
     }
 
@@ -132,8 +76,7 @@ impl HandoffHandler {
         audio_path: &std::path::Path,
         header: &HandoffHeader,
         saved_path: String,
-        stats: &mut TransferStats,
-    ) -> Result<(), TransferError> {
+    ) -> Result<protocol::HandoffCompletion, TransferError> {
         // The desktop UI calls `load_model` before every transcription; the phone
         // has no way to do that, so the handoff path does it here. Without this,
         // capabilities would promise a model that Server was never told to load.
@@ -147,8 +90,6 @@ impl HandoffHandler {
         write_event(send, &HandoffEvent::status(protocol::PHASE_LOADING_MODEL)).await?;
         self.emit_activity("loading_model", None);
         tracing::debug!("handoff loading model {}", settings.path);
-        // File name only, and only if it looks like a distributed model.
-        stats.model_name = Some(safe_model_name(&settings.path));
         crate::cmd::server_cmd::load_model(
             self.app_handle.clone(),
             settings.path.clone(),
@@ -271,8 +212,7 @@ impl HandoffHandler {
             }
         };
         let processing_time_sec = start.elapsed().as_secs();
-        stats.transcribe_sec = Some(processing_time_sec);
-        stats.completion = Some(protocol::HandoffCompletion {
+        let completion = protocol::HandoffCompletion {
             // The store appends its own `-<yyyyMMdd-HHmmss>` stamp, so a bare
             // label reads better in Recents than a second embedded timestamp.
             name: PHONE_TRANSCRIPT_NAME.to_string(),
@@ -280,7 +220,7 @@ impl HandoffHandler {
             segments,
             language: header.lang.clone(),
             model_path: Some(settings.path.clone()),
-        });
+        };
 
         write_event(
             send,
@@ -291,57 +231,10 @@ impl HandoffHandler {
             },
         )
         .await?;
-        Ok(())
+        Ok(completion)
     }
 }
 
-/// What one transfer is worth reporting, gathered as it happens so the event
-/// fires even when the transfer fails partway.
-#[derive(Debug, Default)]
-struct TransferStats {
-    audio_bytes: Option<u64>,
-    transcribe_sec: Option<u64>,
-    model_name: Option<String>,
-    /// The record the frontend needs to put this transcription into Recents.
-    completion: Option<protocol::HandoffCompletion>,
-}
-
-/// Bucket the audio size. An exact byte count is closer to a fingerprint than we
-/// need; buckets answer "are people sending long recordings?" just as well.
-fn size_bucket(bytes: Option<u64>) -> &'static str {
-    const MB: u64 = 1024 * 1024;
-    match bytes {
-        None => "unknown",
-        Some(bytes) if bytes < MB => "<1MB",
-        Some(bytes) if bytes < 10 * MB => "1-10MB",
-        Some(bytes) if bytes < 50 * MB => "10-50MB",
-        Some(_) => ">50MB",
-    }
-}
-
-/// The model's file name, never its path — a path would carry the user's home
-/// directory. Anything that is not shaped like a distributed model file is
-/// reported as `custom`, so a model someone renamed to something personal never
-/// leaves the machine.
-fn safe_model_name(model_path: &str) -> String {
-    let name = std::path::Path::new(model_path)
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let plausible = !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
-    if plausible {
-        name
-    } else {
-        "custom".to_string()
-    }
-}
-
-/// The model settings the desktop UI persists, as `load_model` wants them.
-#[derive(Debug, Clone)]
 pub(super) struct ModelSettings {
     pub(super) path: String,
     gpu_device: Option<i32>,
@@ -394,7 +287,6 @@ pub(super) fn model_settings(app_handle: &tauri::AppHandle) -> Option<ModelSetti
 
 #[cfg(test)]
 mod tests {
-    use super::super::protocol::MAX_AUDIO_BYTES;
     use super::*;
 
     #[test]
@@ -419,41 +311,5 @@ mod tests {
             None
         );
         std::fs::remove_dir_all(folder).unwrap();
-    }
-
-    #[test]
-    fn audio_size_is_bucketed_never_exact() {
-        const MB: u64 = 1024 * 1024;
-        assert_eq!(size_bucket(None), "unknown");
-        assert_eq!(size_bucket(Some(0)), "<1MB");
-        assert_eq!(size_bucket(Some(MB - 1)), "<1MB");
-        assert_eq!(size_bucket(Some(MB)), "1-10MB");
-        assert_eq!(size_bucket(Some(10 * MB - 1)), "1-10MB");
-        assert_eq!(size_bucket(Some(10 * MB)), "10-50MB");
-        assert_eq!(size_bucket(Some(50 * MB - 1)), "10-50MB");
-        assert_eq!(size_bucket(Some(50 * MB)), ">50MB");
-        assert_eq!(size_bucket(Some(MAX_AUDIO_BYTES)), ">50MB");
-    }
-
-    #[test]
-    fn model_name_never_leaks_a_path_or_a_personal_filename() {
-        assert_eq!(
-            safe_model_name("/Users/alice/models/ggml-large-v3-turbo.bin"),
-            "ggml-large-v3-turbo.bin"
-        );
-        // A Windows path on a unix host is not split into components, so the
-        // whole string fails the shape check and degrades to "custom" — the
-        // failure direction we want.
-        assert!(!safe_model_name("C:\\Users\\alice\\ggml-medium.bin").contains("alice"));
-        // Anything not shaped like a distributed model is reported generically.
-        assert_eq!(safe_model_name("/models/alice's therapy notes model.bin"), "custom");
-        assert_eq!(safe_model_name("/models/модель.bin"), "custom");
-        assert_eq!(safe_model_name(&format!("/models/{}.bin", "x".repeat(80))), "custom");
-        assert_eq!(safe_model_name(""), "custom");
-        // Whatever happens, no directory component survives.
-        for path in ["/Users/alice/models/ggml-large-v3-turbo.bin", "/models/alice's model.bin"] {
-            assert!(!safe_model_name(path).contains("alice"), "{path} leaked a path component");
-            assert!(!safe_model_name(path).contains('/'));
-        }
     }
 }

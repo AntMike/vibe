@@ -335,25 +335,6 @@ const notificationHandlers: CommandHandlerMap = {
 	'plugin:notification|register_action_types': () => null,
 }
 
-// --- updater --------------------------------------------------------------
-// `check` resolves to null when there is nothing to update.
-
-const updaterHandlers: CommandHandlerMap = {
-	'plugin:updater|check': () => null,
-	'plugin:updater|download': () => {
-		console.warn('[mock-updater] download is a no-op')
-		return 0
-	},
-	'plugin:updater|install': () => {
-		console.warn('[mock-updater] install is a no-op')
-		return null
-	},
-	'plugin:updater|download_and_install': () => {
-		console.warn('[mock-updater] downloadAndInstall is a no-op')
-		return null
-	},
-}
-
 // --- global-shortcut ------------------------------------------------------
 // Shortcuts are tracked but never fire: the Channel handler is dropped on purpose.
 
@@ -438,7 +419,6 @@ export const pluginHandlers: CommandHandlerMap = {
 	...dialogHandlers,
 	...clipboardHandlers,
 	...notificationHandlers,
-	...updaterHandlers,
 	...globalShortcutHandlers,
 	...miscPluginHandlers,
 	...httpHandlers,

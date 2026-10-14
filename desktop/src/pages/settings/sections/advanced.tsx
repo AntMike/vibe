@@ -1,6 +1,4 @@
-import { useContext } from 'react'
 import { m } from '~/paraglide/messages.js'
-import { UpdaterContext, devToolsEnabled } from '~/providers/updater'
 import { Switch } from '~/components/ui/switch'
 import NumberField from '~/components/number-field'
 import { ReactComponent as CopyIcon } from '~/icons/copy.svg'
@@ -12,7 +10,6 @@ import { SettingsFileGroup } from './settings-file'
 import { ActionRow, SettingsGroup, SettingsRow, rowControlClass, type SettingsViewModel } from './shared'
 
 export function AdvancedSection({ vm }: { vm: SettingsViewModel }) {
-	const { fakeUpdate, setFakeUpdate } = useContext(UpdaterContext)
 	const cpuVariants: Array<{ value: CpuVariant; label: string }> = [
 		{ value: 'auto', label: m.cpuVariantAuto() },
 		{ value: 'avx2', label: m.cpuVariantAvx2() },
@@ -21,14 +18,6 @@ export function AdvancedSection({ vm }: { vm: SettingsViewModel }) {
 
 	return (
 		<div className="space-y-6">
-			{/* Dev builds only: flips the update affordances on without waiting for a real release. */}
-			{devToolsEnabled && (
-				<SettingsGroup title={m.developer()}>
-					<SettingsRow label={m.fakeUpdateAvailable()} description={m.fakeUpdateAvailableInfo()}>
-						<Switch checked={fakeUpdate} onCheckedChange={setFakeUpdate} />
-					</SettingsRow>
-				</SettingsGroup>
-			)}
 			<SettingsGroup>
 				<SettingsRow label={m.checkYtdlpUpdates()} description={m.ytdlpOptionsInfo()}>
 					<Switch checked={vm.preference.shouldCheckYtDlpVersion} onCheckedChange={vm.preference.setShouldCheckYtDlpVersion} />

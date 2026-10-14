@@ -3,12 +3,10 @@ import { getTextDirection } from '~/paraglide/runtime.js'
 import { useTray } from '~/lib/tray'
 import { useNotificationLabels } from '~/lib/notification-labels'
 import { Route, Routes } from 'react-router-dom'
-import UpdateProgress from '~/components/updater-progress'
 import '~/globals.css'
 import SetupPage from '~/pages/setup/page'
 import MainPage from '~/pages/main/page'
 import { ErrorModalProvider } from './providers/error-modal'
-import { UpdaterProvider } from './providers/updater'
 import { PreferenceProvider } from './providers/preference'
 import { usePreferenceProvider } from './providers/preference'
 import { ErrorBoundary } from 'react-error-boundary'
@@ -50,27 +48,24 @@ function AppContent() {
 		<DirectionProvider dir={dir}>
 			<ErrorBoundary FallbackComponent={BoundaryFallback}>
 				<ErrorModalProvider>
-					<UpdaterProvider>
-						<TooltipProvider>
-							<ToastProvider>
-								<HotkeyProvider>
-									<RecordingShortcutProvider>
-										<ErrorModalWithContext />
-										<UpdateProgress />
-										{/* Phone transcriptions arrive while the user is elsewhere, so this must outlive any page. */}
-										<HandoffTranscriptSaver />
-										<FilesProvider>
-											<Routes>
-												<Route path="/" element={<MainPage />} />
-												<Route path="/setup" element={<SetupPage />} />
-											</Routes>
-										</FilesProvider>
-										<Toaster position="bottom-right" />
-									</RecordingShortcutProvider>
-								</HotkeyProvider>
-							</ToastProvider>
-						</TooltipProvider>
-					</UpdaterProvider>
+					<TooltipProvider>
+						<ToastProvider>
+							<HotkeyProvider>
+								<RecordingShortcutProvider>
+									<ErrorModalWithContext />
+									{/* Phone transcriptions arrive while the user is elsewhere, so this must outlive any page. */}
+									<HandoffTranscriptSaver />
+									<FilesProvider>
+										<Routes>
+											<Route path="/" element={<MainPage />} />
+											<Route path="/setup" element={<SetupPage />} />
+										</Routes>
+									</FilesProvider>
+									<Toaster position="bottom-right" />
+								</RecordingShortcutProvider>
+							</HotkeyProvider>
+						</ToastProvider>
+					</TooltipProvider>
 				</ErrorModalProvider>
 			</ErrorBoundary>
 		</DirectionProvider>
