@@ -51,7 +51,8 @@ def english_releases() -> list[Path]:
 
 
 def source_hash(path: Path) -> str:
-	return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+	# CRLF checkouts (core.autocrlf) must hash the same as the LF blob in git
+	return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:12]
 
 
 def frontmatter(path: Path) -> dict[str, str]:

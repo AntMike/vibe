@@ -15,9 +15,9 @@
 	{ "code": "no-NO", "name": "norwegian", "desktop": true, "website": true },
 	{ "code": "pl-PL", "name": "polish", "desktop": true, "website": true },
 	{ "code": "pt-BR", "name": "portuguese", "desktop": true, "website": true },
-	{ "code": "ru-RU", "name": "russian", "desktop": true, "website": true },
 	{ "code": "sv-SE", "name": "swedish", "desktop": true, "website": false },
 	{ "code": "tr-TR", "name": "turkish", "desktop": true, "website": false },
+	{ "code": "uk-UA", "name": "ukrainian", "desktop": true, "website": true },
 	{ "code": "vi-VN", "name": "vietnamese", "desktop": true, "website": false },
 	{ "code": "zh-CN", "name": "chinese", "desktop": true, "website": true },
 	{ "code": "zh-HK", "name": "chinese (HK)", "desktop": true, "website": true }
