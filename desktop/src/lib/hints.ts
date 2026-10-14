@@ -1,4 +1,5 @@
 import { chunkLines, createClient, fillPrompt, type AiConnection } from './ai'
+import { parseTuning, tune, type Vocabulary } from './vocabulary'
 
 /**
  * Recognition hints: a glossary of the names and terms in a recording, handed to Whisper as its
@@ -21,6 +22,8 @@ export interface HintsSettings {
 	draftRuns: number
 	/** Keep `vocabulary.json` beside the transcripts: learn terms from each recording, tell the AI the known ones. */
 	learn: boolean
+	/** Recordings between the AI's tidy-ups of the learned vocabulary; 0 never tidies it. */
+	tuneEvery: number
 }
 
 export const DEFAULT_HINTS: HintsSettings = {
@@ -30,6 +33,7 @@ export const DEFAULT_HINTS: HintsSettings = {
 	refiner: 'words',
 	draftRuns: 1,
 	learn: false,
+	tuneEvery: 0,
 }
 
 /**
@@ -49,6 +53,21 @@ Answer with one comma-separated line of at most ${MAX_TERMS} terms, most importa
 
 """
 {transcript}
+"""`
+
+export const TUNE_PROMPT = `Output only the requested content. No introductions, explanations, or commentary.
+
+Below are names and terms picked out of rough automatic transcripts of one group's recordings, each with the number of recordings it came up in. Some are one name or term written several ways: other inflected forms, other cases or scripts, or mishearings of it. Some are everyday words, or garbled words that are no real name or term.
+
+Answer with JSON only: {"merge": {"variant": "term", ...}, "drop": ["term", ...]}
+- merge: each variant to the one spelling its term should have, usually its most frequent entry. Write the term the way it belongs in a transcript of the spoken language, never translated or transliterated: people's names and borrowed words that take the language's endings in its own script and in their base form (Вітя, not Віті; префаб); only brand and product names in Latin (Figma, Unity, Claude).
+- drop: everyday words, and garbled words you cannot tell the real name or term of. Keep a word that may be the name of a project, game, product, feature or person even when it is also an everyday word (a game called Taxi).
+Leave out every term that is fine as it is. When unsure, leave a term alone: a wrong merge does more harm than a duplicate.
+
+Always right as spelled: {pinned}
+
+"""
+{terms}
 """`
 
 const WORD = /[\p{L}\p{N}][\p{L}\p{N}'’.+-]*[\p{L}\p{N}+]|[\p{L}\p{N}]/gu
@@ -119,6 +138,28 @@ export function buildPrompt(terms: string[], userPrompt?: string): string {
 	return [userPrompt?.trim(), glossary].filter(Boolean).join(' ')
 }
 
+/** The AI connection with the hints' own model, or own command for a custom CLI, when one is set. */
+function hintsConnection(settings: HintsSettings, connection: AiConnection): AiConnection {
+	const own = settings.aiModel?.trim()
+	if (!own) return connection
+	return connection.platform === 'cli' && connection.cli === 'custom' ? { ...connection, cliCommand: own } : { ...connection, model: own }
+}
+
+/** True once `tuneEvery` recordings were learned since the AI last tidied the vocabulary. */
+export function dueForTuning(vocabulary: Vocabulary, settings: HintsSettings) {
+	return settings.tuneEvery > 0 && vocabulary.recordings - (vocabulary.tuned ?? 0) >= settings.tuneEvery
+}
+
+/** Let the AI fold spellings and mishearings of one term together and drop junk; see `TUNE_PROMPT`. */
+export async function tuneVocabulary(vocabulary: Vocabulary, settings: HintsSettings, connection: AiConnection): Promise<Vocabulary> {
+	const terms = Object.entries(vocabulary.terms)
+		.sort((a, b) => b[1].seen - a[1].seen)
+		.map(([term, { seen }]) => `${term} (${seen})`)
+		.join('\n')
+	const prompt = TUNE_PROMPT.replace('{pinned}', () => vocabulary.pinned.join(', ') || 'none').replace('{terms}', () => terms)
+	return tune(vocabulary, parseTuning(await createClient(hintsConnection(settings, connection), { unloadAfter: true }).ask(prompt)))
+}
+
 /** Boil a draft transcript down to its glossary with the chosen refiner. */
 export async function refineDraft(
 	lines: string[],
@@ -128,8 +169,7 @@ export async function refineDraft(
 	known: string[] = [],
 ): Promise<string[]> {
 	if (settings.refiner === 'words') return rareWords(lines.join('\n'))
-	const own = settings.aiModel?.trim()
-	if (own) connection = connection.platform === 'cli' && connection.cli === 'custom' ? { ...connection, cliCommand: own } : { ...connection, model: own }
+	connection = hintsConnection(settings, connection)
 	const contextTokens = connection.platform === 'cli' ? CLI_CONTEXT_TOKENS : connection.contextTokens
 	// ponytail: only the first context-full of a long draft; names past it rarely matter more than the opening's.
 	// The known terms go in before chunking so a long list is counted against the draft's room.

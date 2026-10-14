@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { AiConnection } from '~/lib/ai'
 import type { CallSpeakerTurn } from '~/lib/call-speakers'
 import * as config from '~/lib/config'
-import { buildPrompt, refineDraft, type HintsSettings } from '~/lib/hints'
+import { buildPrompt, dueForTuning, refineDraft, tuneVocabulary, type HintsSettings } from '~/lib/hints'
 import type { ModelMetadata } from '~/lib/model'
 import type { Segment, Transcript } from '~/lib/transcript'
 import { dropBlocked, knownTerms, learn, loadVocabulary, saveVocabulary, type Vocabulary } from '~/lib/vocabulary'
@@ -105,7 +105,8 @@ function message(error: unknown) {
 // ponytail: swaps models twice per file; draft the whole queue first if batches of calls get slow.
 export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undefined, run: HintsRun): Promise<Hints> {
 	const names = run.settings.callNames ? callNames(turns) : []
-	const vocabulary = run.settings.learn && run.vocabularyPath ? await readVocabulary(run) : null
+	let vocabulary = run.settings.learn && run.vocabularyPath ? await readVocabulary(run) : null
+	let tuned = false
 	// Known terms steer the draft's recognition; they are learned only from what the AI finds below.
 	const known = vocabulary ? knownTerms(vocabulary) : []
 	let terms: string[] = []
@@ -132,12 +133,22 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 				run.onWarning(message(error))
 			}
 		}
+		// Also while the draft model holds the GPU, and only with the AI refiner: the words one learns nothing.
+		if (vocabulary && run.settings.refiner !== 'words' && dueForTuning(vocabulary, run.settings) && !run.isAborted()) {
+			try {
+				vocabulary = await tuneVocabulary(vocabulary, run.settings, run.connection)
+				tuned = true
+			} catch (error) {
+				run.onWarning(message(error))
+			}
+		}
 		if (swap) await run.loadModel(run.mainModelPath)
 	}
 	if (vocabulary) {
 		terms = dropBlocked(vocabulary, terms)
 		// Only the AI's terms are learned: the capitalized-words refiner keeps too many mishearings.
-		if (run.settings.refiner !== 'words' && terms.length > 0) await writeVocabulary(run, learn(vocabulary, terms))
+		if (run.settings.refiner !== 'words' && (terms.length > 0 || tuned))
+			await writeVocabulary(run, terms.length > 0 ? learn(vocabulary, terms) : vocabulary)
 	}
 	const pinned = vocabulary?.pinned ?? []
 	const prompt = buildPrompt([...names, ...pinned, ...terms], run.userPrompt)

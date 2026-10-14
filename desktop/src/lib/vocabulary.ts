@@ -22,6 +22,14 @@ export interface Vocabulary {
 	pinned: string[]
 	blocked: string[]
 	terms: Record<string, LearnedTerm>
+	/** The `recordings` count when the AI last tidied the terms; see `tune`. */
+	tuned?: number
+}
+
+/** A tidy-up the AI suggests: other spellings and mishearings to fold into one term, and junk to drop. */
+export interface Tuning {
+	merge: Record<string, string>
+	drop: string[]
 }
 
 export const VOCABULARY_FILENAME = 'vocabulary.json'
@@ -71,6 +79,60 @@ export function knownTerms(vocabulary: Vocabulary): string[] {
 	return [...vocabulary.pinned, ...learned].slice(0, MAX_KNOWN)
 }
 
+/**
+ * The vocabulary with `tuning` applied; the pinned and blocked lists are the user's and stay as they are.
+ * Only terms not known yet are dropped: a known one was picked from two transcripts, which the AI saw
+ * and the tidy-up doesn't ("футбол" there is a project, not a sport).
+ */
+export function tune(vocabulary: Vocabulary, tuning: Tuning): Vocabulary {
+	const blocked = new Set(vocabulary.blocked.map(key))
+	const pinned = new Set(vocabulary.pinned.map(key))
+	const spelling = new Map(Object.keys(vocabulary.terms).map((term) => [key(term), term]))
+	const merges = new Map(Object.entries(tuning.merge).map(([variant, term]) => [key(variant), term.trim()]))
+	// A → B and B → C both end at C, in whatever order the AI listed them.
+	const target = (term: string) => {
+		for (let i = 0; i < 5; i++) {
+			const next = merges.get(key(term))
+			if (!next || key(next) === key(term)) break
+			term = next
+		}
+		return term
+	}
+	const terms = { ...vocabulary.terms }
+	for (const variant of merges.keys()) {
+		const from = spelling.get(variant)
+		const to = target(variant)
+		if (!from || !terms[from] || !to || to === from) continue
+		const entry = terms[from]
+		delete terms[from]
+		if (blocked.has(key(to)) || pinned.has(key(to))) continue
+		const existing = spelling.get(key(to))
+		const into = existing && terms[existing] ? existing : to
+		const prior = terms[into]
+		terms[into] = prior ? { seen: Math.min(vocabulary.recordings, prior.seen + entry.seen), last: Math.max(prior.last, entry.last) } : entry
+		spelling.set(key(to), into)
+	}
+	for (const term of tuning.drop) {
+		const known = spelling.get(key(term))
+		if (known && terms[known]?.seen < KNOWN_AFTER) delete terms[known]
+	}
+	return { ...vocabulary, terms, tuned: vocabulary.recordings }
+}
+
+/** The AI's tidy-up out of its reply, whether or not it came wrapped in a code fence. */
+export function parseTuning(reply: string): Tuning {
+	let value: { merge?: unknown; drop?: unknown }
+	try {
+		value = JSON.parse(reply.slice(reply.indexOf('{'), reply.lastIndexOf('}') + 1))
+	} catch {
+		throw new Error(`The AI did not answer with a vocabulary tidy-up: ${reply.slice(0, 200)}`)
+	}
+	const merge: Record<string, string> = {}
+	for (const [variant, term] of Object.entries(value?.merge ?? {})) if (typeof term === 'string') merge[variant] = term
+	const drop = Array.isArray(value?.drop) ? value.drop.filter((term): term is string => typeof term === 'string') : []
+	return { merge, drop }
+}
+
 export function dropBlocked(vocabulary: Vocabulary, terms: string[]): string[] {
 	const blocked = new Set(vocabulary.blocked.map(key))
 	return terms.filter((term) => !blocked.has(key(term)))
@@ -91,6 +153,7 @@ export function parseVocabulary(text: string): Vocabulary {
 		pinned: strings(value.pinned),
 		blocked: strings(value.blocked),
 		terms,
+		...(Number.isFinite(value.tuned) ? { tuned: value.tuned } : {}),
 	}
 }
 

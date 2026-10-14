@@ -1,17 +1,21 @@
+import { useState } from 'react'
+import { toast } from 'sonner'
 import { m } from '~/paraglide/messages.js'
-import type { HintsRefiner, HintsSettings } from '~/lib/hints'
+import { tuneVocabulary, type HintsRefiner, type HintsSettings } from '~/lib/hints'
 import { getFriendlyModelName } from '~/lib/model'
 import { Switch } from '~/components/ui/switch'
 import { Input } from '~/components/ui/input'
 import { Button } from '~/components/ui/button'
 import { openPath } from '~/lib/app'
-import { vocabularyFile } from '~/lib/vocabulary'
+import { loadVocabulary, saveVocabulary, vocabularyFile, vocabularyPath } from '~/lib/vocabulary'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { SettingsGroup, SettingsNote, SettingsRow, rowControlClass, type SettingsViewModel } from './shared'
 
 /** Select has no empty value; this stands for "no draft pass". */
 const NO_DRAFT = 'none'
 const DRAFT_RUNS = [1, 2, 3, 4, 5]
+/** Recordings between AI tidy-ups of the vocabulary; 0 is off. */
+const TUNE_EVERY = [0, 10, 25, 50]
 
 /** Recognition hints: a glossary for Whisper from call names and an optional draft pass. */
 export function HintsGroup({ vm }: { vm: SettingsViewModel }) {
@@ -19,6 +23,23 @@ export function HintsGroup({ vm }: { vm: SettingsViewModel }) {
 	const set = (patch: Partial<HintsSettings>) => setHints({ ...hints, ...patch })
 	const connection = vm.preference.ai.connection
 	const customCli = connection.platform === 'cli' && connection.cli === 'custom'
+	const [tuning, setTuning] = useState(false)
+
+	// ponytail: a transcription learning at the same moment can write over the tidy-up; the next one redoes it.
+	async function tuneNow() {
+		setTuning(true)
+		try {
+			const path = await vocabularyPath(vm.preference.projectsPath)
+			const vocabulary = await loadVocabulary(path)
+			const tuned = await tuneVocabulary(vocabulary, hints, connection)
+			await saveVocabulary(path, tuned)
+			toast.success(m.hintsTuneDone({ before: Object.keys(vocabulary.terms).length, after: Object.keys(tuned.terms).length }))
+		} catch (error) {
+			toast.error(m.hintsTuneFailed(), { description: String(error instanceof Error ? error.message : error) })
+		} finally {
+			setTuning(false)
+		}
+	}
 
 	return (
 		<SettingsGroup title={m.hints()}>
@@ -98,13 +119,37 @@ export function HintsGroup({ vm }: { vm: SettingsViewModel }) {
 					<SettingsRow label={m.hintsLearn()} description={m.hintsLearnInfo()}>
 						<div className="flex items-center gap-2">
 							{hints.learn && (
-								<Button variant="outline" size="sm" onClick={async () => openPath({ name: '', path: await vocabularyFile(vm.preference.projectsPath) })}>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={async () => openPath({ name: '', path: await vocabularyFile(vm.preference.projectsPath) })}>
 									{m.hintsLearnOpen()}
 								</Button>
 							)}
 							<Switch checked={hints.learn} onCheckedChange={(learn) => set({ learn })} />
 						</div>
 					</SettingsRow>
+					{hints.learn && hints.draftModelPath && hints.refiner !== 'words' && (
+						<SettingsRow label={m.hintsTune()} description={m.hintsTuneInfo()}>
+							<div className="flex items-center gap-2">
+								<Button variant="outline" size="sm" disabled={tuning} onClick={tuneNow}>
+									{tuning ? m.hintsTuneRunning() : m.hintsTuneNow()}
+								</Button>
+								<Select value={String(hints.tuneEvery)} onValueChange={(value) => set({ tuneEvery: Number(value) })}>
+									<SelectTrigger className={`w-56 ${rowControlClass}`}>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{TUNE_EVERY.map((count) => (
+											<SelectItem key={count} value={String(count)}>
+												{count === 0 ? m.hintsTuneOff() : m.hintsTuneEvery({ count })}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+						</SettingsRow>
+					)}
 				</>
 			)}
 		</SettingsGroup>
