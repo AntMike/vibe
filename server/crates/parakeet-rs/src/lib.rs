@@ -1,5 +1,6 @@
 //! Native Parakeet ASR inference built on vibe-server's shared GGML runtime.
 
+mod boost;
 mod decoder;
 mod encoder;
 mod load;
@@ -10,6 +11,7 @@ mod runtime;
 mod segment;
 mod tokenizer;
 
+pub use boost::Boost;
 pub use decoder::Token;
 pub use ggml_rs_sys as sys;
 pub use mel::{MelConfig, MelFeatures, MelFrontend};

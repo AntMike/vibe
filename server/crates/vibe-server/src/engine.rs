@@ -194,6 +194,7 @@ impl Engine {
                     options.windows.clone()
                 };
                 let runs = options.draft_runs.clamp(1, 8) as usize;
+                let boost = parakeet_rs::Boost::new(model.tokenizer(), &options.hotwords);
                 let total = windows
                     .iter()
                     .map(|window| window.end_sample.saturating_sub(window.start_sample))
@@ -231,6 +232,7 @@ impl Engine {
                                 vad,
                                 &audio,
                                 language,
+                                &boost,
                                 || should_abort.as_mut().is_some_and(|callback| callback()),
                                 |transcription| {
                                     let tokens: Vec<_> = transcription

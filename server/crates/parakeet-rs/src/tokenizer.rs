@@ -27,6 +27,15 @@ impl Tokenizer {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_pieces(pieces: &[&str], blank_id: u32) -> Self {
+        Self {
+            tokens: pieces.iter().map(|piece| piece.to_string()).collect(),
+            blank_id,
+            unknown_id: 0,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.tokens.len()
     }

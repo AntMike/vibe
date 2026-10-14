@@ -59,6 +59,9 @@ enum Command {
         /// Parakeet only: decode this many times (1-8) and keep the surest words.
         #[arg(long, default_value_t = 1)]
         draft_runs: i32,
+        /// Parakeet only: comma-separated terms to lean toward.
+        #[arg(long, value_delimiter = ',')]
+        hotwords: Vec<String>,
     },
     Serve {
         model: Option<String>,
@@ -127,6 +130,7 @@ pub async fn run() -> anyhow::Result<()> {
             beam_size,
             gpu_device,
             draft_runs,
+            hotwords,
         } => {
             transcribe_command(
                 TranscribeArgs {
@@ -147,6 +151,7 @@ pub async fn run() -> anyhow::Result<()> {
                     beam_size,
                     gpu_device,
                     draft_runs,
+                    hotwords,
                 },
                 config,
             )
@@ -210,6 +215,7 @@ async fn transcribe_command(args: TranscribeArgs, config: AppConfig) -> anyhow::
                 beam_size: args.beam_size,
                 vad_model_path: args.vad_model,
                 draft_runs: args.draft_runs,
+                hotwords: args.hotwords,
                 ..TranscribeOptions::default()
             },
         )
@@ -271,4 +277,5 @@ struct TranscribeArgs {
     beam_size: i32,
     gpu_device: i32,
     draft_runs: i32,
+    hotwords: Vec<String>,
 }

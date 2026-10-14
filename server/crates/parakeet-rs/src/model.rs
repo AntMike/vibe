@@ -10,7 +10,7 @@ use crate::encoder::{build_encoder, build_pre_encode, full_mask, positional_embe
 use crate::load::lookup_tensor;
 use crate::runtime::Graph;
 use crate::MelFeatures;
-use crate::{sys, Error, Result, Tokenizer};
+use crate::{sys, Boost, Error, Result, Tokenizer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelInfo {
@@ -112,7 +112,7 @@ impl Model {
         }
     }
 
-    fn transcribe_chunk(&self, samples: &[f32], language: &str) -> Result<Transcription> {
+    fn transcribe_chunk(&self, samples: &[f32], language: &str, boost: &Boost) -> Result<Transcription> {
         self.validate_language(language)?;
         let started = Instant::now();
         let mel_started = Instant::now();
@@ -131,7 +131,7 @@ impl Model {
             shape[1]
         );
         let decoder_started = Instant::now();
-        let tokens = self.decode(&encoded, shape[1] as usize)?;
+        let tokens = self.decode(&encoded, shape[1] as usize, boost)?;
         eprintln!(
             "[parakeet][chunk] decoder_ms={} tokens={} total_ms={}",
             decoder_started.elapsed().as_millis(),
@@ -146,14 +146,16 @@ impl Model {
     }
 
     pub fn transcribe(&self, vad: &mut vad_rs::Vad, samples: &[f32], language: &str) -> Result<LongFormTranscription> {
-        self.transcribe_with(vad, samples, language, || false, |_| {}, |_| {})
+        self.transcribe_with(vad, samples, language, &Boost::default(), || false, |_| {}, |_| {})
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn transcribe_with(
         &self,
         vad: &mut vad_rs::Vad,
         samples: &[f32],
         language: &str,
+        boost: &Boost,
         mut should_abort: impl FnMut() -> bool,
         mut on_segment: impl FnMut(&Transcription),
         mut on_progress: impl FnMut(i32),
@@ -189,7 +191,7 @@ impl Model {
                 range.end_sample,
                 (range.end_sample - range.start_sample) as f64 / 16000.0
             );
-            let mut transcription = self.transcribe_chunk(&samples[range.start_sample..range.end_sample], language)?;
+            let mut transcription = self.transcribe_chunk(&samples[range.start_sample..range.end_sample], language, boost)?;
             let frame_offset = range.start_sample / 1280;
             for token in &mut transcription.tokens {
                 token.frame += frame_offset;

@@ -28,12 +28,17 @@ function callNames(turns: CallSpeakerTurn[] | undefined): string[] {
 	return [...seconds].sort((a, b) => b[1] - a[1]).map(([name]) => name)
 }
 
-/** One fast pass with the draft model, decoded `runs` times over altered audio. Leaves the draft model loaded. */
-async function draftSegments(path: string, draftModel: string, swap: boolean, run: HintsRun, runs = 1): Promise<Segment[]> {
+/**
+ * One fast pass with the draft model, decoded `runs` times over altered audio, leaning toward the
+ * `hotwords` it already knows. Leaves the draft model loaded.
+ */
+async function draftSegments(path: string, draftModel: string, swap: boolean, run: HintsRun, runs = 1, hotwords: string[] = []): Promise<Segment[]> {
 	if (swap) await run.loadModel(draftModel)
 	const metadata = await invoke<ModelMetadata>('get_model_metadata', { modelPath: draftModel })
 	const vad = metadata.capabilities.requires_vad ? { vad_model: `${await invoke<string>('get_models_folder')}/${config.vadModelFilename}` } : {}
-	const draft = await invoke<Transcript>('transcribe', { options: { path, ...vad, ...(runs > 1 ? { draft_runs: runs } : {}) } })
+	const draft = await invoke<Transcript>('transcribe', {
+		options: { path, ...vad, ...(runs > 1 ? { draft_runs: runs } : {}), ...(hotwords.length > 0 ? { hotwords } : {}) },
+	})
 	return draft.segments.filter((segment) => segment.text.trim())
 }
 
@@ -101,13 +106,15 @@ function message(error: unknown) {
 export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undefined, run: HintsRun): Promise<Hints> {
 	const names = run.settings.callNames ? callNames(turns) : []
 	const vocabulary = run.settings.learn && run.vocabularyPath ? await readVocabulary(run) : null
+	// Known terms steer the draft's recognition; they are learned only from what the AI finds below.
+	const known = vocabulary ? knownTerms(vocabulary) : []
 	let terms: string[] = []
 	let draft: Segment[] = []
 	const draftModel = run.settings.draftModelPath
 	if (draftModel) {
 		const swap = draftModel !== run.mainModelPath
 		try {
-			draft = await draftSegments(path, draftModel, swap, run, run.settings.draftRuns)
+			draft = await draftSegments(path, draftModel, swap, run, run.settings.draftRuns, known)
 		} catch (error) {
 			if (!run.isAborted()) run.onWarning(message(error))
 		}
@@ -119,7 +126,7 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 					names,
 					run.settings,
 					run.connection,
-					vocabulary ? knownTerms(vocabulary) : [],
+					known,
 				)
 			} catch (error) {
 				run.onWarning(message(error))

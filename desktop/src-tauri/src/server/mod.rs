@@ -252,6 +252,9 @@ impl ServerProcess {
                 form = form.text("prompt", prompt.clone());
             }
         }
+        if let Some(hotwords) = options.hotwords.as_ref().filter(|hotwords| !hotwords.is_empty()) {
+            form = form.text("hotwords", hotwords.join(","));
+        }
         if options.carry_prompt.unwrap_or(false) {
             form = form.text("carry_prompt", "true");
         }

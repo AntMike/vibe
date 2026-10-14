@@ -1,3 +1,4 @@
+use crate::boost::Boost;
 use crate::model::Model;
 use crate::runtime::{CpuRuntime, Graph};
 use crate::{sys, Error, Result};
@@ -128,8 +129,27 @@ impl StepGraph {
     }
 }
 
+/// What a decoding step reads and writes, kept whole so a boosted term that
+/// doesn't get finished can be taken back.
+#[derive(Clone)]
+struct State {
+    h: Vec<Vec<f32>>,
+    c: Vec<Vec<f32>>,
+    embedding: Vec<f32>,
+    frame: usize,
+    symbols: usize,
+    /// Tokens output so far.
+    emitted: usize,
+    /// Terms being spelled; see `Boost::advance`.
+    partial: Vec<(usize, usize)>,
+}
+
 impl Model {
-    pub fn decode(&self, encoded: &[f32], frames: usize) -> Result<Vec<Token>> {
+    /// Greedy TDT decoding. Where `boost` turns the model's choice toward a term,
+    /// the state before is kept, and if the term then isn't spelled to its end the
+    /// decoder goes back there and takes the model's own choice: a lone "▁в" from
+    /// Віктор is undone, a whole "Мунблум" is kept.
+    pub fn decode(&self, encoded: &[f32], frames: usize, boost: &Boost) -> Result<Vec<Token>> {
         let dimension = self.info().encoder_dimension as usize;
         if encoded.len() != frames * dimension {
             return Err(Error::Ggml("encoder output shape"));
@@ -140,33 +160,65 @@ impl Model {
             let mut embedding_graph = EmbeddingGraph::new(self)?;
             let hidden = self.info().predictor_hidden as usize;
             let layers = self.info().predictor_layers as usize;
-            let mut h = vec![vec![0.0f32; hidden]; layers];
-            let mut c = vec![vec![0.0f32; hidden]; layers];
-            // NeMo TDT uses the blank embedding as the start-of-sequence
-            // predictor input (not an all-zero pseudo-token).
-            let mut embedding = embedding_graph.lookup(&runtime, self.tokenizer().blank_id(), hidden)?;
+            let mut state = State {
+                h: vec![vec![0.0f32; hidden]; layers],
+                c: vec![vec![0.0f32; hidden]; layers],
+                // NeMo TDT uses the blank embedding as the start-of-sequence
+                // predictor input (not an all-zero pseudo-token).
+                embedding: embedding_graph.lookup(&runtime, self.tokenizer().blank_id(), hidden)?,
+                frame: 0,
+                symbols: 0,
+                emitted: 0,
+                partial: Vec::new(),
+            };
             let mut output = Vec::new();
-            let mut frame = 0;
-            let mut symbols = 0;
+            let mut checkpoint: Option<State> = None;
+            // The step right after going back runs without boost.
+            let mut unboosted = false;
             let mut iterations = 0;
-            while frame < frames && iterations < frames * 16 + 1024 {
+            let limit = frames * 16 + 1024;
+            loop {
+                if state.frame >= frames {
+                    // A term still unfinished when the audio ends was never said.
+                    let Some(saved) = checkpoint.take() else { break };
+                    state = saved;
+                    output.truncate(state.emitted);
+                    unboosted = true;
+                }
+                if iterations >= limit {
+                    break;
+                }
                 iterations += 1;
+                let frame = state.frame;
                 let enc = &encoded[frame * dimension..(frame + 1) * dimension];
-                let mut inputs = vec![(step_graph.embedding, embedding.as_slice()), (step_graph.encoder, enc)];
+                let mut inputs = vec![(step_graph.embedding, state.embedding.as_slice()), (step_graph.encoder, enc)];
                 for layer in 0..layers {
-                    inputs.push((step_graph.prev_h[layer], h[layer].as_slice()));
-                    inputs.push((step_graph.prev_c[layer], c[layer].as_slice()));
+                    inputs.push((step_graph.prev_h[layer], state.h[layer].as_slice()));
+                    inputs.push((step_graph.prev_c[layer], state.c[layer].as_slice()));
                 }
                 runtime.execute(&mut step_graph.graph, &inputs)?;
                 let token_classes = self.info().vocabulary_size as usize;
                 let mut logits = vec![0.0f32; token_classes + self.info().joint_extra_outputs as usize];
                 sys::ggml_backend_tensor_get(step_graph.logits, logits.as_mut_ptr().cast(), 0, logits.len() * 4);
-                let token = logits[..token_classes]
-                    .iter()
-                    .enumerate()
-                    .max_by(|a, b| a.1.total_cmp(b.1))
-                    .map(|x| x.0)
-                    .unwrap();
+                let best = |logits: &[f32]| {
+                    logits[..token_classes]
+                        .iter()
+                        .enumerate()
+                        .max_by(|a, b| a.1.total_cmp(b.1))
+                        .map(|x| x.0)
+                        .unwrap()
+                };
+                let own = best(&logits);
+                if !unboosted {
+                    boost.apply(&state.partial, &mut logits[..token_classes]);
+                }
+                unboosted = false;
+                let token = best(&logits);
+                let mut guess = false;
+                if token != own && checkpoint.is_none() {
+                    checkpoint = Some(state.clone());
+                    guess = true;
+                }
                 let duration_index = logits[token_classes..]
                     .iter()
                     .enumerate()
@@ -182,8 +234,8 @@ impl Model {
                 }
                 if !is_blank {
                     for layer in 0..layers {
-                        sys::ggml_backend_tensor_get(step_graph.next_h[layer], h[layer].as_mut_ptr().cast(), 0, hidden * 4);
-                        sys::ggml_backend_tensor_get(step_graph.next_c[layer], c[layer].as_mut_ptr().cast(), 0, hidden * 4);
+                        sys::ggml_backend_tensor_get(step_graph.next_h[layer], state.h[layer].as_mut_ptr().cast(), 0, hidden * 4);
+                        sys::ggml_backend_tensor_get(step_graph.next_c[layer], state.c[layer].as_mut_ptr().cast(), 0, hidden * 4);
                     }
                     let token_logit = logits[token];
                     let sum = logits[..token_classes]
@@ -196,22 +248,34 @@ impl Model {
                         duration_frames: duration,
                         prob: 1.0 / sum,
                     });
-                    embedding = embedding_graph.lookup(&runtime, token as u32, hidden)?;
+                    state.emitted = output.len();
+                    let finished = boost.advance(&mut state.partial, token as u32);
+                    if checkpoint.is_some() && (finished || state.partial.is_empty()) {
+                        if finished {
+                            checkpoint = None;
+                        } else if !guess {
+                            state = checkpoint.take().unwrap();
+                            output.truncate(state.emitted);
+                            unboosted = true;
+                            continue;
+                        }
+                    }
+                    state.embedding = embedding_graph.lookup(&runtime, token as u32, hidden)?;
                 }
-                frame += duration;
-                symbols += 1;
+                state.frame += duration;
+                state.symbols += 1;
                 if duration != 0 {
-                    symbols = 0;
-                } else if self.info().tdt_max_symbols > 0 && symbols >= self.info().tdt_max_symbols as usize {
-                    frame += 1;
-                    symbols = 0;
+                    state.symbols = 0;
+                } else if self.info().tdt_max_symbols > 0 && state.symbols >= self.info().tdt_max_symbols as usize {
+                    state.frame += 1;
+                    state.symbols = 0;
                 } else if is_blank && self.info().tdt_max_symbols > 0 {
-                    iterations += self.info().tdt_max_symbols as usize - symbols;
-                    frame += 1;
-                    symbols = 0;
+                    iterations += self.info().tdt_max_symbols as usize - state.symbols;
+                    state.frame += 1;
+                    state.symbols = 0;
                 }
             }
-            if iterations >= frames * 16 + 1024 {
+            if iterations >= limit {
                 return Err(Error::Ggml("RNN-T iteration limit"));
             }
             Ok(output)

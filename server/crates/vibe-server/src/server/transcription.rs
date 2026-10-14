@@ -132,19 +132,23 @@ pub(super) fn build_options(
         beam_size: values.i32("beam_size"),
         stable_timestamps,
         vad_model_path,
-        languages: values
-            .string("languages")
-            .map(|languages| {
-                languages
-                    .split(',')
-                    .map(|lang| lang.trim().to_string())
-                    .filter(|lang| !lang.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default(),
+        languages: comma_list(values.string("languages")),
         windows: Vec::new(),
         draft_runs: values.i32("draft_runs"),
+        hotwords: comma_list(values.string("hotwords")),
     }
+}
+
+fn comma_list(value: Option<String>) -> Vec<String> {
+    value
+        .map(|value| {
+            value
+                .split(',')
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 const SAMPLE_RATE: f64 = 16_000.0;
