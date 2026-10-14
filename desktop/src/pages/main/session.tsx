@@ -68,6 +68,8 @@ interface RecordFinish {
 	callApp?: string | null
 	/** Unix seconds the recording started. */
 	startedAt?: number
+	/** The channel or DM Slack's huddle bar named during the call. */
+	callChannel?: string | null
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -217,7 +219,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			}
 			const jobId = hydrate(record, saved.recordPath, saved.mediaPath, 'record')
 			notifyTranscriptsChanged()
-			if (jobId && payload.callApp === 'slack' && payload.startedAt) trackSlackHuddle(jobId, payload.startedAt)
+			if (jobId && payload.callApp === 'slack' && payload.startedAt) trackSlackHuddle(jobId, payload.startedAt, payload.callChannel)
 			if (current.autoTranscribeAfterRecording && jobId) transcribeJob(jobId)
 		})
 		return () => {

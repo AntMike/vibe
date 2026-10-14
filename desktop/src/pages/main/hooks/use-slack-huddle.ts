@@ -7,23 +7,31 @@ import { renderExport } from '~/lib/auto-export'
 import { CONFIG_KEYS } from '~/lib/config-keys'
 import { usePersisted } from '~/lib/config-store'
 import { projectExportFilename } from '~/lib/project-name'
-import { findHuddleThread, postToThread, type HuddleThread } from '~/lib/slack'
+import { findHuddleThread, postWithConnector, postWithToken, type SlackFile, type SlackMethod, type SummaryAs } from '~/lib/slack'
 import { m } from '~/paraglide/messages.js'
 import { usePreferenceProvider } from '~/providers/preference'
 import type { Summaries } from './use-summaries'
 import type { Job, TranscribeQueue } from './use-transcribe-queue'
 
+/** A recorded huddle: when the recording started (unix seconds) and the channel Slack showed. */
+interface Call {
+	startedAt: number
+	channel?: string
+}
+
 /**
  * Offer each Slack huddle recorded in this session to its huddle thread once the transcript is
- * done, and its summary too when one is made on finish. Send posts the summary as a reply and
- * attaches the transcript in the user's export format.
+ * done, and its summary too when one is made on finish. Send posts the summary, as a reply or a
+ * file, and attaches the transcript in the user's export format.
  */
 export function useSlackHuddle(queue: TranscribeQueue, summaries: Summaries) {
 	const preference = usePreferenceProvider()
+	const [method] = usePersisted<SlackMethod>(CONFIG_KEYS.slackMethod, 'off')
 	const [token] = usePersisted(CONFIG_KEYS.slackToken, '')
+	const [summaryAs] = usePersisted<SummaryAs>(CONFIG_KEYS.slackSummaryAs, 'message')
 	const [withoutAsking] = usePersisted(CONFIG_KEYS.slackSendWithoutAsking, false)
-	// Recordings waiting on their transcript, with the thread search already under way.
-	const calls = useRef(new Map<string, Promise<HuddleThread | null>>())
+	// Recordings waiting on their transcript.
+	const calls = useRef(new Map<string, Call>())
 	// Offers shown in a notification, waiting on its Send button.
 	const offers = useRef(new Map<string, () => void>())
 	const jobsRef = useRef(queue.jobs)
@@ -31,24 +39,19 @@ export function useSlackHuddle(queue: TranscribeQueue, summaries: Summaries) {
 		jobsRef.current = queue.jobs
 	}, [queue.jobs])
 
-	/** A Slack call just became a project: start looking for its thread while it is transcribed. */
+	/** A Slack call just became a project: offer it once it is transcribed. */
 	const track = useCallback(
-		(jobId: string, startedAt: number) => {
-			const key = token.trim()
-			if (!key) return
-			const thread = findHuddleThread(key, startedAt).catch((error) => {
-				console.error('slack huddle search failed:', error)
-				return null
-			})
-			calls.current.set(jobId, thread)
+		(jobId: string, startedAt: number, channel?: string | null) => {
+			if (method !== 'off') calls.current.set(jobId, { startedAt, channel: channel || undefined })
 		},
-		[token],
+		[method],
 	)
 
 	const send = useCallback(
-		async (jobId: string, thread: HuddleThread, where: string) => {
+		async (jobId: string, call: Call, where: string) => {
 			const job = jobsRef.current.find((candidate) => candidate.id === jobId)
 			if (!job) return
+			const sending = toast.loading(m.slackSending({ where }), { position: 'bottom-center' })
 			try {
 				const format = preference.textFormatTranscript
 				const rendered = await renderExport(
@@ -63,27 +66,38 @@ export function useSlackHuddle(queue: TranscribeQueue, summaries: Summaries) {
 						labels: { transcript: m.exportTranscript(), summary: m.exportSummary() },
 					},
 				)
-				const bytes = typeof rendered === 'string' ? new TextEncoder().encode(rendered) : rendered
-				const name = projectExportFilename(job.name, formatExtensions[format].slice(1), 'transcript')
-				await postToThread(token.trim(), thread, job.summary, { name, bytes })
-				toast.success(m.slackSent({ where }), { position: 'bottom-center' })
+				const encode = (text: string) => new TextEncoder().encode(text)
+				const files: SlackFile[] = [
+					{
+						name: projectExportFilename(job.name, formatExtensions[format].slice(1), 'transcript'),
+						bytes: typeof rendered === 'string' ? encode(rendered) : rendered,
+					},
+				]
+				const summary = job.summary?.trim()
+				if (summary && summaryAs === 'file') files.push({ name: projectExportFilename(job.name, 'md', 'summary'), bytes: encode(summary) })
+				const message = summaryAs === 'message' ? summary : undefined
+
+				if (method === 'token') {
+					const thread = await findHuddleThread(token.trim(), call.startedAt, call.channel)
+					if (!thread) throw new Error(m.slackNoHuddle())
+					await postWithToken(token.trim(), thread, message, files)
+				} else {
+					if (!call.channel) throw new Error(m.slackNoHuddle())
+					await postWithConnector(call.channel, call.startedAt, message, files)
+				}
+				toast.success(m.slackSent({ where }), { id: sending, position: 'bottom-center' })
 			} catch (error) {
 				console.error('slack send failed:', error)
-				toast.error(m.slackSendFailed(), { description: String(error), position: 'bottom-center' })
+				toast.error(m.slackSendFailed(), { id: sending, description: String(error), position: 'bottom-center' })
 			}
 		},
-		[preference.exportOptions, preference.textAreaDirection, preference.textFormatTranscript, token],
+		[method, preference.exportOptions, preference.textAreaDirection, preference.textFormatTranscript, summaryAs, token],
 	)
 
 	const offer = useCallback(
-		async (job: Job, search: Promise<HuddleThread | null>) => {
-			const thread = await search
-			if (!thread) {
-				toast.error(m.slackNoHuddle(), { position: 'bottom-center' })
-				return
-			}
-			const where = thread.label || m.slackDirectMessage()
-			const go = () => void send(job.id, thread, where)
+		(job: Job, call: Call) => {
+			const where = call.channel || m.slackDirectMessage()
+			const go = () => void send(job.id, call, where)
 			if (withoutAsking) return go()
 			// Only Windows records a call app on its own, so only Windows gets here.
 			offers.current.set(job.id, go)
@@ -110,7 +124,7 @@ export function useSlackHuddle(queue: TranscribeQueue, summaries: Summaries) {
 
 	const autoSummary = summaries.enabled && preference.ai.tasks.summary.autoOnFinish
 	useEffect(() => {
-		for (const [jobId, search] of calls.current) {
+		for (const [jobId, call] of calls.current) {
 			const job = queue.jobs.find((candidate) => candidate.id === jobId)
 			if (!job || job.status === 'error' || job.status === 'cancelled') {
 				calls.current.delete(jobId)
@@ -120,7 +134,7 @@ export function useSlackHuddle(queue: TranscribeQueue, summaries: Summaries) {
 			// ponytail: waits on the auto summary's result; one that neither lands nor fails holds the offer.
 			if (autoSummary && !job.summary && !summaries.errors[jobId]) continue
 			calls.current.delete(jobId)
-			void offer(job, search)
+			offer(job, call)
 		}
 	}, [autoSummary, offer, queue.jobs, summaries.errors])
 

@@ -303,6 +303,10 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
         let turns = speaker_watch.and_then(|watch| watch.stop()).unwrap_or_default();
         #[cfg(not(windows))]
         let turns = Vec::new();
+        #[cfg(windows)]
+        let call_channel = crate::call_capture::HUDDLE_CHANNEL.lock().ok().and_then(|mut channel| channel.take());
+        #[cfg(not(windows))]
+        let call_channel: Option<String> = None;
         let frames = |mic: bool| {
             let index = stream_is_mic.iter().position(|is_mic| *is_mic == mic)?;
             stream_loudness[index].lock().ok().map(|loudness| loudness.frames().to_vec())
@@ -390,6 +394,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
                     "warning": warning,
                     "speakers": speakers,
                     "callApp": call_app_name,
+                    "callChannel": call_channel,
                     "startedAt": started_at,
                 }),
             )

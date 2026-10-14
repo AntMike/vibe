@@ -6,6 +6,7 @@
 //!   Manage API → on). Pair once, in a solo "Meet now", by clicking Allow in Teams.
 //! - Slack mute: UI Automation, reading the huddle mic button's label.
 //! - Slack speakers: UI Automation, reading which huddle tile carries the active-speaker ring.
+//! - Slack channel: UI Automation, reading the name after "Huddle in " in the huddle bar.
 //!
 //! Unknown mute state = record the mic. Losing your words is worse than keeping a muted aside.
 
@@ -13,13 +14,16 @@ use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use crate::voice_activity::SpeakerTurn;
 use eyre::{Context, Result};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+/// The channel or DM the Slack huddle is in, as its huddle bar names it; taken when the recording stops.
+pub static HUDDLE_CHANNEL: Mutex<Option<String>> = Mutex::new(None);
 
 /// Read by the mic stream callback on every buffer.
 pub static MIC_MUTED: AtomicBool = AtomicBool::new(false);
@@ -265,6 +269,9 @@ pub fn start_speaker_watch(app: CallApp, pid: u32, recording_started: Instant) -
     if app != CallApp::Slack {
         return None;
     }
+    if let Ok(mut channel) = HUDDLE_CHANNEL.lock() {
+        *channel = None;
+    }
     Some(Worker::spawn("call-speaker-watch", move |stop| {
         let mut timeline = Timeline::default();
         if let Err(error) = slack::watch_speakers(&stop, pid, |speaking| {
@@ -353,7 +360,7 @@ mod teams {
 }
 
 mod slack {
-    use super::MIC_MUTED;
+    use super::{HUDDLE_CHANNEL, MIC_MUTED};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
     use std::thread;
@@ -363,7 +370,7 @@ mod slack {
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker, TreeScope_Children, TreeScope_Descendants,
-        UIA_ButtonControlTypeId, UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ProcessIdPropertyId,
+        UIA_ButtonControlTypeId, UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_NamePropertyId, UIA_ProcessIdPropertyId,
     };
 
     /// `Some(true)` muted, `Some(false)` live, `None` not a huddle mic button.
@@ -527,8 +534,18 @@ mod slack {
                 || unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) },
             )?;
             let mut count = None;
+            let mut channel_found = false;
             loop {
                 let started = Instant::now();
+                if !channel_found {
+                    if let Ok(Some(channel)) = find_channel(&uia, pid) {
+                        tracing::info!("slack huddle channel: {channel:?}");
+                        channel_found = true;
+                        if let Ok(mut current) = HUDDLE_CHANNEL.lock() {
+                            *current = Some(channel);
+                        }
+                    }
+                }
                 let tiles = find_tiles(&uia, pid).unwrap_or_default();
                 if count != Some(tiles.len()) {
                     count = Some(tiles.len());
@@ -559,6 +576,27 @@ mod slack {
                 }
             }
             Ok(tiles)
+        }
+    }
+
+    /// The name Slack's huddle bar shows after "Huddle in ": `general`, or a person for a DM.
+    // ponytail: English UI label, like the mute and tile labels; the huddle window's title would do too.
+    fn find_channel(uia: &IUIAutomation, pid: u32) -> windows::core::Result<Option<String>> {
+        unsafe {
+            let by_pid = uia.CreatePropertyCondition(UIA_ProcessIdPropertyId, &VARIANT::from(pid as i32))?;
+            let by_name = uia.CreatePropertyCondition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Huddle in ")))?;
+            let walker = uia.RawViewWalker()?;
+            let windows = uia.GetRootElement()?.FindAll(TreeScope_Children, &by_pid)?;
+            for w in 0..windows.Length()? {
+                let Ok(label) = windows.GetElement(w)?.FindFirst(TreeScope_Descendants, &by_name) else {
+                    continue;
+                };
+                let name = walker.GetNextSiblingElement(&label)?.CurrentName()?.to_string();
+                if !name.trim().is_empty() {
+                    return Ok(Some(name.trim().to_string()));
+                }
+            }
+            Ok(None)
         }
     }
 

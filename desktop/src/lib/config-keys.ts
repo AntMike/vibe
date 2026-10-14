@@ -66,7 +66,11 @@ export const CONFIG_KEYS = {
 	notificationsDictation: 'notifications.dictation',
 
 	// Slack: offer a recorded huddle to its thread. The token stays on this computer.
+	/** `off`, `token` (the Slack API) or `connector` (Claude Code's Slack connector). */
+	slackMethod: 'slack.method',
 	slackToken: 'slack.userToken',
+	/** The summary as a thread reply (`message`) or a `.md` file (`file`). */
+	slackSummaryAs: 'slack.summaryAs',
 	/** Post without the Send/Dismiss notification first. */
 	slackSendWithoutAsking: 'slack.sendWithoutAsking',
 

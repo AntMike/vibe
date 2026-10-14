@@ -6,6 +6,7 @@ import { Input } from '~/components/ui/input'
 import { Switch } from '~/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { CONFIG_KEYS } from '~/lib/config-keys'
+import type { SlackMethod, SummaryAs } from '~/lib/slack'
 import { usePersisted } from '~/lib/config-store'
 import { m } from '~/paraglide/messages.js'
 import { usePreferenceProvider } from '~/providers/preference'
@@ -22,7 +23,9 @@ export function NotificationsSection() {
 	const [sound, setSound] = usePersisted(CONFIG_KEYS.notificationsMeetingSound, true)
 	const [autoRecord, setAutoRecord] = usePersisted(CONFIG_KEYS.notificationsAutoRecord, true)
 	const [dictation, setDictation] = usePersisted(CONFIG_KEYS.notificationsDictation, true)
+	const [slackMethod, setSlackMethod] = usePersisted<SlackMethod>(CONFIG_KEYS.slackMethod, 'off')
 	const [slackToken, setSlackToken] = usePersisted(CONFIG_KEYS.slackToken, '')
+	const [slackSummaryAs, setSlackSummaryAs] = usePersisted<SummaryAs>(CONFIG_KEYS.slackSummaryAs, 'message')
 	const [slackWithoutAsking, setSlackWithoutAsking] = usePersisted(CONFIG_KEYS.slackSendWithoutAsking, false)
 	const system = isWindows && style === 'system'
 
@@ -92,19 +95,46 @@ export function NotificationsSection() {
 
 			{isWindows && (
 				<SettingsGroup title={m.slackGroup()}>
-					<SettingsRow label={m.slackToken()} description={m.slackTokenInfo()}>
-						<Input
-							value={slackToken}
-							onChange={(event) => setSlackToken(event.target.value)}
-							placeholder={m.slackTokenPlaceholder()}
-							type="password"
-							className={`w-64 ${rowControlClass}`}
-						/>
+					<SettingsRow label={m.slackMethod()} description={slackMethod === 'connector' ? m.slackConnectorInfo() : m.slackMethodInfo()}>
+						<Select value={slackMethod} onValueChange={(value: SlackMethod) => setSlackMethod(value)}>
+							<SelectTrigger className={`w-64 ${rowControlClass}`}>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="off">{m.slackMethodOff()}</SelectItem>
+								<SelectItem value="token">{m.slackMethodToken()}</SelectItem>
+								<SelectItem value="connector">{m.slackMethodConnector()}</SelectItem>
+							</SelectContent>
+						</Select>
 					</SettingsRow>
-					{slackToken.trim() && (
-						<SettingsRow label={m.slackSendWithoutAsking()} description={m.slackSendWithoutAskingInfo()}>
-							<Switch checked={slackWithoutAsking} onCheckedChange={setSlackWithoutAsking} aria-label={m.slackSendWithoutAsking()} />
+					{slackMethod === 'token' && (
+						<SettingsRow label={m.slackToken()} description={m.slackTokenInfo()}>
+							<Input
+								value={slackToken}
+								onChange={(event) => setSlackToken(event.target.value)}
+								placeholder={m.slackTokenPlaceholder()}
+								type="password"
+								className={`w-64 ${rowControlClass}`}
+							/>
 						</SettingsRow>
+					)}
+					{slackMethod !== 'off' && (
+						<>
+							<SettingsRow label={m.slackSummaryAs()}>
+								<Select value={slackSummaryAs} onValueChange={(value: SummaryAs) => setSlackSummaryAs(value)}>
+									<SelectTrigger className={`w-64 ${rowControlClass}`}>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="message">{m.slackSummaryAsMessage()}</SelectItem>
+										<SelectItem value="file">{m.slackSummaryAsFile()}</SelectItem>
+									</SelectContent>
+								</Select>
+							</SettingsRow>
+							<SettingsRow label={m.slackSendWithoutAsking()} description={m.slackSendWithoutAskingInfo()}>
+								<Switch checked={slackWithoutAsking} onCheckedChange={setSlackWithoutAsking} aria-label={m.slackSendWithoutAsking()} />
+							</SettingsRow>
+						</>
 					)}
 				</SettingsGroup>
 			)}
