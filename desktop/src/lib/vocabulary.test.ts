@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/plugin-fs', () => ({}))
 vi.mock('@tauri-apps/api/path', () => ({}))
 
-import { dropBlocked, emptyVocabulary, knownTerms, learn, parseTuning, parseVocabulary, tune } from './vocabulary'
+import { emptyVocabulary, key, knownTerms, learn, parseTuning, parseVocabulary, spellAsKnown, tune } from './vocabulary'
 
 describe('vocabulary', () => {
 	it('knows a term once two recordings turned it up, in its first spelling', () => {
@@ -30,7 +30,37 @@ describe('vocabulary', () => {
 		const learned = learn(learn(vocabulary, ['Дімослав', 'Figma']), ['Дімослав', 'Figma'])
 		expect(learned.terms['Дімослав']).toBeUndefined()
 		expect(knownTerms(learned)).toEqual(['ШІ', 'Figma'])
-		expect(dropBlocked(learned, ['Дімослав', 'Діма'])).toEqual(['Діма'])
+		expect(spellAsKnown(learned, ['Дімослав', 'Діма', 'figma'])).toEqual(['Діма', 'Figma'])
+	})
+
+	it('matches a term across scripts and endings, and only that', () => {
+		const same = [
+			['Фігма', 'Figma', 'Фігмою'],
+			['Крикет', 'Cricket', 'крікету'],
+			['префаб', 'префабу', 'Prefab', 'префабами'],
+			['варрум', 'варруму', 'warroom'],
+			['Коїнфліп', 'Coin Flip'],
+			['Коннект', 'Connect'],
+			['Вітя', 'Віті', 'Вітею'],
+			['Олексій', 'Олексія', 'Олексієм'],
+			['Мунблум', 'Мунблуму'],
+		]
+		for (const group of same) expect(new Set(group.map(key)).size).toBe(1)
+		const apart = ['Діма', 'Дмитро', 'Макс', 'Максим', 'ШІ', 'Шиішка', 'Таня', 'Тамара', 'Ян', 'Яна']
+		expect(new Set(apart.map(key)).size).toBe(apart.length)
+		const learned = learn(learn(emptyVocabulary(), ['префаб']), ['префабу', 'Prefab'])
+		expect(learned.terms).toEqual({ префаб: { seen: 2, last: 2 } })
+		expect(spellAsKnown({ ...learned, pinned: ['Prefab'] }, ['префабом'])).toEqual(['Prefab'])
+	})
+
+	it('folds spellings of one term in an older file into the most seen', () => {
+		const parsed = parseVocabulary('{"recordings":10,"terms":{"Figma":{"seen":1,"last":2},"Фігма":{"seen":9,"last":10}}}')
+		expect(parsed.terms).toEqual({ Фігма: { seen: 10, last: 10 } })
+	})
+
+	it("renames a term to the AI's spelling of it", () => {
+		const vocabulary = { ...emptyVocabulary(), recordings: 3, terms: { Фігма: { seen: 3, last: 3 } } }
+		expect(tune(vocabulary, { merge: { Фігма: 'Figma' }, drop: [] }).terms).toEqual({ Figma: { seen: 3, last: 3 } })
 	})
 
 	it('reads a hand-edited file leniently and refuses one that is not a vocabulary', () => {

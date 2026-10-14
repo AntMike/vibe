@@ -5,7 +5,7 @@ import * as config from '~/lib/config'
 import { buildPrompt, dueForTuning, refineDraft, tuneVocabulary, type HintsSettings } from '~/lib/hints'
 import type { ModelMetadata } from '~/lib/model'
 import type { Segment, Transcript } from '~/lib/transcript'
-import { dropBlocked, knownTerms, learn, loadVocabulary, saveVocabulary, type Vocabulary } from '~/lib/vocabulary'
+import { knownTerms, learn, loadVocabulary, saveVocabulary, spellAsKnown, type Vocabulary } from '~/lib/vocabulary'
 
 export interface HintsRun {
 	settings: HintsSettings
@@ -145,7 +145,7 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 		if (swap) await run.loadModel(run.mainModelPath)
 	}
 	if (vocabulary) {
-		terms = dropBlocked(vocabulary, terms)
+		terms = spellAsKnown(vocabulary, terms)
 		// Only the AI's terms are learned: the capitalized-words refiner keeps too many mishearings.
 		if (run.settings.refiner !== 'words' && (terms.length > 0 || tuned))
 			await writeVocabulary(run, terms.length > 0 ? learn(vocabulary, terms) : vocabulary)
