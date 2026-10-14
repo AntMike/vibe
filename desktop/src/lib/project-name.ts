@@ -1,3 +1,4 @@
+import type { TranscriptExportContent } from './transcript-export'
 import type { ProjectSource } from './types'
 import { audioExtensions, videoExtensions } from './config'
 
@@ -5,6 +6,13 @@ const sourcePrefixes: Record<ProjectSource, string> = {
 	record: 'Record-',
 	url: 'Url-',
 	file: 'File-',
+}
+
+// ponytail: ASCII like the source prefixes, so names stay stable across UI languages
+const contentSuffixes: Record<TranscriptExportContent, string> = {
+	transcript: '-transcript',
+	summary: '-summary',
+	both: '-transcript-summary',
 }
 
 const mediaExtensions = new Set([...audioExtensions, ...videoExtensions])
@@ -20,8 +28,8 @@ export function autoProjectName(name: string, source: ProjectSource = 'file'): s
 	return `${sourcePrefixes[source]}${withoutMediaExtension(name)}`
 }
 
-/** Turn the visible project title into a safe, recognizable export filename. */
-export function projectExportFilename(name: string, extension: string): string {
+/** Turn the visible project title into a safe, recognizable export filename; `content` tags what is inside. */
+export function projectExportFilename(name: string, extension: string, content?: TranscriptExportContent): string {
 	const cleaned = withoutMediaExtension(name)
 		.replace(/[/\\?%*:|"<>]/g, '-')
 		// eslint-disable-next-line no-control-regex
@@ -36,5 +44,5 @@ export function projectExportFilename(name: string, extension: string): string {
 			.replace(/^\.+/, '')
 			.replace(/[^a-z0-9]/gi, '')
 			.toLowerCase() || 'txt'
-	return `${safeStem}.${safeExtension}`
+	return `${safeStem}${content ? contentSuffixes[content] : ''}.${safeExtension}`
 }

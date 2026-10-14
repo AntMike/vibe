@@ -30,4 +30,12 @@ describe('projectExportFilename', () => {
 	] as const)('builds a safe export name from %s', (name, extension, expected) => {
 		expect(projectExportFilename(name, extension)).toBe(expected)
 	})
+
+	it.each([
+		['transcript', 'File-call-transcript.pdf'],
+		['summary', 'File-call-summary.pdf'],
+		['both', 'File-call-transcript-summary.pdf'],
+	] as const)('tags %s exports', (content, expected) => {
+		expect(projectExportFilename('File-call.mp3', 'pdf', content)).toBe(expected)
+	})
 })

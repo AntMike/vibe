@@ -86,7 +86,7 @@ export function useTranscriptExport({
 	const save = useCallback(async () => {
 		if (!file || (segments.length === 0 && !summary)) return false
 		const extension = formatExtensions[format].slice(1)
-		const suggestedName = projectExportFilename(file.name, extension)
+		const suggestedName = projectExportFilename(file.name, extension, content)
 		let defaultDirectory = await dirname(file.path)
 		try {
 			defaultDirectory = await downloadDir()
