@@ -468,6 +468,7 @@
 	"fromLink": "リンクから",
 	"newSession": "新規",
 	"editLine": "行を編集",
+	"editSummary": "要約を編集",
 	"noMatchingLines": "一致する行はありません。",
 	"play": "再生",
 	"pause": "一時停止",

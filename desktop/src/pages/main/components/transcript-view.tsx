@@ -149,8 +149,8 @@ function SegmentEditor({ initialText, caret, textSizeClassName, onCommit, onCanc
 		if (settledRef.current) return
 		settledRef.current = true
 		const next = draft.trim()
-		// An empty segment would be lost text, not an edit: fall back to what was there.
-		if (next && next !== initialText) onCommit(next, then)
+		// A cleared line is committed as '' and removed; Escape is still the way out of an edit.
+		if (next !== initialText) onCommit(next, then)
 		else if (then) onMove(then === 'next' ? 1 : -1, then === 'next' ? 'start' : 'end')
 		else onCancel()
 	}
@@ -596,11 +596,21 @@ export default function TranscriptView({
 
 	const commitEdit = useCallback(
 		(index: number, text: string, then?: 'next' | 'previous') => {
-			queue.updateSegmentText(job.id, index, text)
-			if (then) moveEdit(index, then === 'next' ? 1 : -1, then === 'next' ? 'start' : 'end')
-			else setEditing(null)
+			if (text) {
+				queue.updateSegmentText(job.id, index, text)
+				if (then) moveEdit(index, then === 'next' ? 1 : -1, then === 'next' ? 'start' : 'end')
+				else setEditing(null)
+				return
+			}
+			// Clearing a line removes it, and every line after it moves up one index.
+			const position = visible.findIndex((entry) => entry.index === index)
+			const neighbour = then ? visible[position + (then === 'next' ? 1 : -1)] : undefined
+			queue.removeSegment(job.id, index)
+			setEditing(
+				neighbour ? { index: neighbour.index > index ? neighbour.index - 1 : neighbour.index, caret: then === 'next' ? 'start' : 'end' } : null,
+			)
 		},
-		[job.id, moveEdit, queue],
+		[job.id, moveEdit, queue, visible],
 	)
 
 	const renameSpeaker = useCallback((speaker: number, name: string) => queue.setSpeakerName(job.id, speaker, name), [job.id, queue])

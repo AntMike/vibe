@@ -468,6 +468,7 @@
 	"fromLink": "링크에서",
 	"newSession": "새로 만들기",
 	"editLine": "줄 편집",
+	"editSummary": "요약 편집",
 	"noMatchingLines": "일치하는 줄이 없습니다.",
 	"play": "재생",
 	"pause": "일시정지",

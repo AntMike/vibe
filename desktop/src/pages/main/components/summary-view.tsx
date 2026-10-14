@@ -1,4 +1,4 @@
-import { ArrowUp, Sparkles, X } from 'lucide-react'
+import { ArrowUp, Pencil, Sparkles, X } from 'lucide-react'
 import Markdown from 'react-markdown'
 import { useEffect, useRef, useState } from 'react'
 import { m } from '~/paraglide/messages.js'
@@ -27,7 +27,10 @@ function Streaming({ text, size }: { text: string; size: TranscriptViewOptions['
  */
 export default function SummaryView({ job, options }: { job: Job; options: TranscriptViewOptions }) {
 	const preference = usePreferenceProvider()
-	const { summaries } = useSession()
+	const { summaries, queue } = useSession()
+	// The summary's markdown while it is being edited; null when it is shown rendered.
+	const [summaryDraft, setSummaryDraft] = useState<string | null>(null)
+	const summaryRef = useRef<HTMLTextAreaElement>(null)
 	const [question, setQuestion] = useState('')
 	// The question just sent, shown above its answer while the answer streams.
 	const [sent, setSent] = useState<string | null>(null)
@@ -49,6 +52,23 @@ export default function SummaryView({ job, options }: { job: Job; options: Trans
 		if (asking || thread.length > 0) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
 	}, [asking, answerDraft, thread.length])
 
+	// A new summary or another file must never leave an editor open over different text.
+	useEffect(() => setSummaryDraft(null), [job.id, summarizing])
+
+	// The editor grows with the text instead of scrolling inside a fixed box.
+	useEffect(() => {
+		const textarea = summaryRef.current
+		if (!textarea) return
+		textarea.style.height = 'auto'
+		textarea.style.height = `${textarea.scrollHeight}px`
+	}, [summaryDraft])
+
+	function saveSummary() {
+		if (summaryDraft === null) return
+		queue.setJobSummary(job.id, summaryDraft.trim())
+		setSummaryDraft(null)
+	}
+
 	function send() {
 		const text = question.trim()
 		if (!text || asking) return
@@ -63,7 +83,19 @@ export default function SummaryView({ job, options }: { job: Job; options: Trans
 		<div className="relative flex h-full min-h-0 flex-col">
 			<div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
 				<div dir={preference.textAreaDirection} className={cn('mx-auto w-full max-w-[86ch] px-8 py-10 xl:max-w-[96ch]', canAsk && 'pb-28')}>
-					<p className="mb-8 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">{m.summaryTab()}</p>
+					<div className="mb-8 flex items-center gap-2">
+						<p className="text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">{m.summaryTab()}</p>
+						{job.summary && !summarizing && summaryDraft === null && (
+							<button
+								type="button"
+								onClick={() => setSummaryDraft(job.summary ?? '')}
+								aria-label={m.editSummary()}
+								title={m.editSummary()}
+								className="cursor-pointer rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground">
+								<Pencil className="h-3 w-3" />
+							</button>
+						)}
+					</div>
 
 					{summarizing && progress && progress.done < progress.total && (
 						<div className="mb-6 space-y-2">
@@ -80,7 +112,38 @@ export default function SummaryView({ job, options }: { job: Job; options: Trans
 						</div>
 					)}
 
-					{summarizing && draft ? (
+					{summaryDraft !== null ? (
+						<div>
+							<textarea
+								ref={summaryRef}
+								autoFocus
+								value={summaryDraft}
+								onChange={(event) => setSummaryDraft(event.target.value)}
+								onKeyDown={(event) => {
+									if (event.key === 'Escape') {
+										event.preventDefault()
+										setSummaryDraft(null)
+									} else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+										event.preventDefault()
+										saveSummary()
+									}
+								}}
+								aria-label={m.editSummary()}
+								className={cn(
+									'block w-full resize-none overflow-hidden rounded-md border border-border bg-transparent p-3 font-mono text-foreground outline-none focus:ring-2 focus:ring-ring/60',
+									textSizeClass[options.textSize],
+								)}
+							/>
+							<div className="mt-3 flex justify-end gap-2">
+								<Button type="button" variant="ghost" size="sm" onClick={() => setSummaryDraft(null)}>
+									{m.cancel()}
+								</Button>
+								<Button type="button" size="sm" onClick={saveSummary}>
+									{m.save()}
+								</Button>
+							</div>
+						</div>
+					) : summarizing && draft ? (
 						<Streaming text={draft} size={options.textSize} />
 					) : job.summary ? (
 						// The models answer in markdown; render it rather than showing the syntax.
