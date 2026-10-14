@@ -128,3 +128,32 @@ pub fn show_meeting_toast(app: &AppHandle, source: Source, on_action: impl Fn(&A
         tracing::error!("could not show the meeting notification: {error}");
     }
 }
+
+/// A Windows notification offering to post a finished transcript to its Slack huddle thread. Send
+/// emits `slack_send` with `job_id`; other platforms ask inside the app instead.
+#[tauri::command]
+#[cfg_attr(not(windows), allow(unused_variables))]
+pub fn show_slack_send_toast(app: AppHandle, title: String, body: String, send: String, dismiss: String, job_id: String) {
+    #[cfg(windows)]
+    {
+        use tauri::Emitter;
+        use tauri_winrt_notification::Toast;
+
+        let handle = app.clone();
+        if let Err(error) = Toast::new(&app.config().identifier)
+            .title(&title)
+            .text1(&body)
+            .add_button(&send, "send")
+            .add_button(&dismiss, "dismiss")
+            .on_activated(move |action| {
+                if action.as_deref() == Some("send") {
+                    handle.emit("slack_send", &job_id).log_error();
+                }
+                Ok(())
+            })
+            .show()
+        {
+            tracing::error!("could not show the Slack notification: {error}");
+        }
+    }
+}

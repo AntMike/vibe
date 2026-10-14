@@ -22,6 +22,7 @@ import { useAudioDownload } from '~/pages/home/hooks/use-audio-download'
 import { useRecording } from '~/pages/home/hooks/use-recording'
 import { useDropTarget } from './hooks/use-drop-target'
 import { useSummaries, type Summaries } from './hooks/use-summaries'
+import { useSlackHuddle } from './hooks/use-slack-huddle'
 import { useTranscribeQueue, type TranscribeQueue } from './hooks/use-transcribe-queue'
 
 export type SessionMode = 'idle' | 'working' | 'done'
@@ -63,6 +64,10 @@ interface RecordFinish {
 	name: string
 	warning?: string
 	speakers?: CallSpeakerTurn[]
+	/** `slack` or `teams` when only that app's sound was recorded. */
+	callApp?: string | null
+	/** Unix seconds the recording started. */
+	startedAt?: number
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -72,6 +77,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	const { setState: setErrorModal } = useContext(ErrorModalContext)
 	const queue = useTranscribeQueue()
 	const summaries = useSummaries(queue)
+	const slackHuddle = useSlackHuddle(queue, summaries)
 	const [panel, setPanel] = useState<IdlePanel>('none')
 	const [collectingFolder, setCollectingFolder] = useState(false)
 	const [recordElapsed, setRecordElapsed] = useState(0)
@@ -83,11 +89,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	const recordingCompletionRef = useRef({
 		hydrate: queue.hydrate,
 		transcribeJob: queue.transcribeJob,
+		trackSlackHuddle: slackHuddle.track,
 		preference,
 	})
 	useEffect(() => {
-		recordingCompletionRef.current = { hydrate: queue.hydrate, transcribeJob: queue.transcribeJob, preference }
-	}, [preference, queue.hydrate, queue.transcribeJob])
+		recordingCompletionRef.current = { hydrate: queue.hydrate, transcribeJob: queue.transcribeJob, trackSlackHuddle: slackHuddle.track, preference }
+	}, [preference, queue.hydrate, queue.transcribeJob, slackHuddle.track])
 
 	const enqueuePaths = useCallback(
 		async (paths: string[], source: ProjectSource) => {
@@ -177,7 +184,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			setPanel('none')
 			if (payload.warning) toast.warning(m.recordingRecoveredWarning(), { description: payload.warning, position: 'bottom-center' })
 
-			const { preference: current, hydrate, transcribeJob } = recordingCompletionRef.current
+			const { preference: current, hydrate, transcribeJob, trackSlackHuddle } = recordingCompletionRef.current
 			const name = autoProjectName(payload.name, 'record')
 			const createdAt = new Date()
 			const saved = await saveTranscript({
@@ -210,6 +217,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			}
 			const jobId = hydrate(record, saved.recordPath, saved.mediaPath, 'record')
 			notifyTranscriptsChanged()
+			if (jobId && payload.callApp === 'slack' && payload.startedAt) trackSlackHuddle(jobId, payload.startedAt)
 			if (current.autoTranscribeAfterRecording && jobId) transcribeJob(jobId)
 		})
 		return () => {

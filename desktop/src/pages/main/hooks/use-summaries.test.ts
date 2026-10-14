@@ -22,8 +22,12 @@ describe('automatic summaries', () => {
 		expect(shouldAutoSummarize(completed(), 'done')).toBe(false)
 	})
 
-	it('never auto-runs for hydrated, empty, or already summarized jobs', () => {
-		expect(shouldAutoSummarize(completed({ hydrated: true }), 'running')).toBe(false)
+	it('runs for a recording transcribed in this session, not for a project opened from the store', () => {
+		expect(shouldAutoSummarize(completed({ hydrated: true }), 'running')).toBe(true)
+		expect(shouldAutoSummarize(completed({ hydrated: true }), undefined)).toBe(false)
+	})
+
+	it('never auto-runs for empty or already summarized jobs', () => {
 		expect(shouldAutoSummarize(completed({ segments: [] }), 'running')).toBe(false)
 		expect(shouldAutoSummarize(completed({ summary: 'Existing' }), 'running')).toBe(false)
 	})

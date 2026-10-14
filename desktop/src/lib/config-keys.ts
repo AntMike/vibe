@@ -65,6 +65,11 @@ export const CONFIG_KEYS = {
 	/** Say so when dictated text was copied to the clipboard. */
 	notificationsDictation: 'notifications.dictation',
 
+	// Slack: offer a recorded huddle to its thread. The token stays on this computer.
+	slackToken: 'slack.userToken',
+	/** Post without the Send/Dismiss notification first. */
+	slackSendWithoutAsking: 'slack.sendWithoutAsking',
+
 	// Reading the transcript
 	textAreaDirection: 'transcript.textDirection',
 	textSize: 'transcript.textSize',

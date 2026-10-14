@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { platform } from '@tauri-apps/plugin-os'
 import { toast } from 'sonner'
 import { Button } from '~/components/ui/button'
+import { Input } from '~/components/ui/input'
 import { Switch } from '~/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { CONFIG_KEYS } from '~/lib/config-keys'
@@ -21,6 +22,8 @@ export function NotificationsSection() {
 	const [sound, setSound] = usePersisted(CONFIG_KEYS.notificationsMeetingSound, true)
 	const [autoRecord, setAutoRecord] = usePersisted(CONFIG_KEYS.notificationsAutoRecord, true)
 	const [dictation, setDictation] = usePersisted(CONFIG_KEYS.notificationsDictation, true)
+	const [slackToken, setSlackToken] = usePersisted(CONFIG_KEYS.slackToken, '')
+	const [slackWithoutAsking, setSlackWithoutAsking] = usePersisted(CONFIG_KEYS.slackSendWithoutAsking, false)
 	const system = isWindows && style === 'system'
 
 	return (
@@ -86,6 +89,25 @@ export function NotificationsSection() {
 					<Switch checked={preference.focusOnFinish} onCheckedChange={preference.setFocusOnFinish} aria-label={m.focusWindowOnFinish()} />
 				</SettingsRow>
 			</SettingsGroup>
+
+			{isWindows && (
+				<SettingsGroup title={m.slackGroup()}>
+					<SettingsRow label={m.slackToken()} description={m.slackTokenInfo()}>
+						<Input
+							value={slackToken}
+							onChange={(event) => setSlackToken(event.target.value)}
+							placeholder={m.slackTokenPlaceholder()}
+							type="password"
+							className={`w-64 ${rowControlClass}`}
+						/>
+					</SettingsRow>
+					{slackToken.trim() && (
+						<SettingsRow label={m.slackSendWithoutAsking()} description={m.slackSendWithoutAskingInfo()}>
+							<Switch checked={slackWithoutAsking} onCheckedChange={setSlackWithoutAsking} aria-label={m.slackSendWithoutAsking()} />
+						</SettingsRow>
+					)}
+				</SettingsGroup>
+			)}
 		</div>
 	)
 }

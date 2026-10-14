@@ -202,6 +202,15 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
     let mut speaker_watch = None;
     #[cfg(windows)]
     let recording_started = Instant::now();
+    // Wall-clock start and the call app's name, so the frontend can find the Slack huddle thread.
+    let started_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default();
+    #[cfg(windows)]
+    let call_app_name = call_app.and_then(|(app, _)| app).map(|app| format!("{app:?}").to_lowercase());
+    #[cfg(not(windows))]
+    let call_app_name: Option<String> = None;
 
     for device in devices {
         tracing::debug!("Recording from device: {}", device.name);
@@ -380,6 +389,8 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
                     "name": output.file_name().map(|n| n.to_str().unwrap_or_default()).unwrap_or_default(),
                     "warning": warning,
                     "speakers": speakers,
+                    "callApp": call_app_name,
+                    "startedAt": started_at,
                 }),
             )
             .map_err(|e| eyre!("{e:?}"))

@@ -36,8 +36,12 @@ export interface Summaries {
 	clearShowSummary: () => void
 }
 
-export function shouldAutoSummarize(job: Pick<Job, 'status' | 'hydrated' | 'summary' | 'segments'>, previousStatus?: Job['status']) {
-	return previousStatus !== undefined && previousStatus !== 'done' && job.status === 'done' && !job.hydrated && !job.summary && job.segments.length > 0
+/**
+ * Only a transcription that ran in this session: a project opened from the store is first seen as
+ * done, while a recording (hydrated as an empty project) transcribed here goes running → done.
+ */
+export function shouldAutoSummarize(job: Pick<Job, 'status' | 'summary' | 'segments'>, previousStatus?: Job['status']) {
+	return previousStatus !== undefined && previousStatus !== 'done' && job.status === 'done' && !job.summary && job.segments.length > 0
 }
 
 /** Summarize the partial summaries; the model sees them as the transcript so the user's prompt still applies. */
@@ -209,7 +213,7 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 	)
 
 	// Auto-run only on a real status transition in this session. Turning the setting on later must
-	// not sweep over already-finished work, and hydrated projects are always manual-only.
+	// not sweep over already-finished work, and projects opened from the store are manual-only.
 	useEffect(() => {
 		const completed: Job[] = []
 		const liveIds = new Set<string>()

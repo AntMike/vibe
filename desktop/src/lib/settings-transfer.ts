@@ -33,6 +33,7 @@ const LOCAL_KEYS = new Set<string>([
 	CONFIG_KEYS.ytDlpVersion,
 	CONFIG_KEYS.ytDlpLastUpdateCheck,
 	CONFIG_KEYS.ytDlpDeclinedVersion,
+	CONFIG_KEYS.slackToken,
 ])
 
 /** Fields inside a shared setting that still belong to this computer. */

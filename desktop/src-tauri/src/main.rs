@@ -156,7 +156,8 @@ async fn main() -> Result<()> {
             meeting_prompt::dismiss_meeting_prompt,
             meeting_prompt::meeting_prompt_ready,
             meeting_prompt::test_meeting_notification,
-            notifications::set_notification_labels
+            notifications::set_notification_labels,
+            notifications::show_slack_send_toast
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
