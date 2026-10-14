@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/plugin-fs', () => ({}))
 vi.mock('@tauri-apps/api/path', () => ({}))
 
-import { emptyVocabulary, key, knownTerms, learn, parseTuning, parseVocabulary, spellAsKnown, tune } from './vocabulary'
+import { dropBlocked, emptyVocabulary, key, knownFamilies, knownTerms, learn, otherScripts, parseTuning, parseVocabulary, tune } from './vocabulary'
 
 describe('vocabulary', () => {
 	it('knows a term once two recordings turned it up, in its first spelling', () => {
@@ -30,7 +30,7 @@ describe('vocabulary', () => {
 		const learned = learn(learn(vocabulary, ['Дімослав', 'Figma']), ['Дімослав', 'Figma'])
 		expect(learned.terms['Дімослав']).toBeUndefined()
 		expect(knownTerms(learned)).toEqual(['ШІ', 'Figma'])
-		expect(spellAsKnown(learned, ['Дімослав', 'Діма', 'figma'])).toEqual(['Діма', 'Figma'])
+		expect(dropBlocked(learned, ['Дімослав', 'Діма'])).toEqual(['Діма'])
 	})
 
 	it('matches a term across scripts and endings, and only that', () => {
@@ -49,18 +49,36 @@ describe('vocabulary', () => {
 		const apart = ['Діма', 'Дмитро', 'Макс', 'Максим', 'ШІ', 'Шиішка', 'Таня', 'Тамара', 'Ян', 'Яна']
 		expect(new Set(apart.map(key)).size).toBe(apart.length)
 		const learned = learn(learn(emptyVocabulary(), ['префаб']), ['префабу', 'Prefab'])
-		expect(learned.terms).toEqual({ префаб: { seen: 2, last: 2 } })
-		expect(spellAsKnown({ ...learned, pinned: ['Prefab'] }, ['префабом'])).toEqual(['Prefab'])
+		expect(learned.terms).toEqual({ префаб: { seen: 2, last: 2, forms: ['префабу', 'Prefab'] } })
 	})
 
-	it('folds spellings of one term in an older file into the most seen', () => {
+	it('keeps every spelling of a term as its family and uses them all', () => {
+		let vocabulary = learn(learn(emptyVocabulary(), ['Фігма', 'Крикет']), ['Figma', 'фігма', 'Cricket'])
+		expect(vocabulary.terms['Фігма']).toEqual({ seen: 2, last: 2, forms: ['Figma'] })
+		expect(knownFamilies(vocabulary)).toEqual([
+			['Фігма', 'Figma'],
+			['Крикет', 'Cricket'],
+		])
+		expect(otherScripts(vocabulary, ['Figma', 'Крикет', 'Діма'])).toEqual(['Фігма', 'Cricket'])
+		// A pinned spelling leads its family and takes in the learned ones.
+		vocabulary = { ...vocabulary, pinned: ['Figma'] }
+		expect(knownFamilies(vocabulary)).toEqual([
+			['Figma', 'Фігма'],
+			['Крикет', 'Cricket'],
+		])
+		expect(knownTerms(vocabulary)).toEqual(['Figma', 'Крикет'])
+		const read = parseVocabulary(JSON.stringify(vocabulary))
+		expect(read).toEqual(vocabulary)
+	})
+
+	it('folds spellings of one term in an older file into one family under the most seen', () => {
 		const parsed = parseVocabulary('{"recordings":10,"terms":{"Figma":{"seen":1,"last":2},"Фігма":{"seen":9,"last":10}}}')
-		expect(parsed.terms).toEqual({ Фігма: { seen: 10, last: 10 } })
+		expect(parsed.terms).toEqual({ Фігма: { seen: 10, last: 10, forms: ['Figma'] } })
 	})
 
-	it("renames a term to the AI's spelling of it", () => {
+	it("leads a family with the AI's spelling and keeps the old one", () => {
 		const vocabulary = { ...emptyVocabulary(), recordings: 3, terms: { Фігма: { seen: 3, last: 3 } } }
-		expect(tune(vocabulary, { merge: { Фігма: 'Figma' }, drop: [] }).terms).toEqual({ Figma: { seen: 3, last: 3 } })
+		expect(tune(vocabulary, { merge: { Фігма: 'Figma' }, drop: [] }).terms).toEqual({ Figma: { seen: 3, last: 3, forms: ['Фігма'] } })
 	})
 
 	it('reads a hand-edited file leniently and refuses one that is not a vocabulary', () => {
@@ -92,7 +110,8 @@ describe('vocabulary', () => {
 			drop: ['Сорян', 'футбол', 'nothing'],
 		})
 		// A known term is never dropped, only merged.
-		expect(tuned.terms).toEqual({ Вітя: { seen: 10, last: 10 }, Мунблум: { seen: 4, last: 8 }, футбол: { seen: 7, last: 10 } })
+		// A mishearing (Moonblu, Монблум) is not kept as a form; another spelling of the same name (Віті) is.
+		expect(tuned.terms).toEqual({ Вітя: { seen: 10, last: 10, forms: ['Віті'] }, Мунблум: { seen: 4, last: 8 }, футбол: { seen: 7, last: 10 } })
 		expect(tuned.tuned).toBe(10)
 		expect(tuned.pinned).toEqual(['ШІ'])
 	})

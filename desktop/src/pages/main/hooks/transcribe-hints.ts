@@ -5,7 +5,7 @@ import * as config from '~/lib/config'
 import { buildPrompt, dueForTuning, refineDraft, tuneVocabulary, type HintsSettings } from '~/lib/hints'
 import type { ModelMetadata } from '~/lib/model'
 import type { Segment, Transcript } from '~/lib/transcript'
-import { knownTerms, learn, loadVocabulary, saveVocabulary, spellAsKnown, type Vocabulary } from '~/lib/vocabulary'
+import { dropBlocked, knownFamilies, learn, loadVocabulary, otherScripts, saveVocabulary, type Vocabulary } from '~/lib/vocabulary'
 
 export interface HintsRun {
 	settings: HintsSettings
@@ -107,15 +107,15 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 	const names = run.settings.callNames ? callNames(turns) : []
 	let vocabulary = run.settings.learn && run.vocabularyPath ? await readVocabulary(run) : null
 	let tuned = false
-	// Known terms steer the draft's recognition; they are learned only from what the AI finds below.
-	const known = vocabulary ? knownTerms(vocabulary) : []
+	// Known terms steer the draft's recognition in every spelling; they are learned only from what the AI finds below.
+	const families = vocabulary ? knownFamilies(vocabulary) : []
 	let terms: string[] = []
 	let draft: Segment[] = []
 	const draftModel = run.settings.draftModelPath
 	if (draftModel) {
 		const swap = draftModel !== run.mainModelPath
 		try {
-			draft = await draftSegments(path, draftModel, swap, run, run.settings.draftRuns, known)
+			draft = await draftSegments(path, draftModel, swap, run, run.settings.draftRuns, families.flat())
 		} catch (error) {
 			if (!run.isAborted()) run.onWarning(message(error))
 		}
@@ -127,7 +127,7 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 					names,
 					run.settings,
 					run.connection,
-					known,
+					families.map((family) => family.join(' / ')),
 				)
 			} catch (error) {
 				run.onWarning(message(error))
@@ -145,13 +145,15 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 		if (swap) await run.loadModel(run.mainModelPath)
 	}
 	if (vocabulary) {
-		terms = spellAsKnown(vocabulary, terms)
+		terms = dropBlocked(vocabulary, terms)
 		// Only the AI's terms are learned: the capitalized-words refiner keeps too many mishearings.
 		if (run.settings.refiner !== 'words' && (terms.length > 0 || tuned))
 			await writeVocabulary(run, terms.length > 0 ? learn(vocabulary, terms) : vocabulary)
 	}
 	const pinned = vocabulary?.pinned ?? []
-	const prompt = buildPrompt([...names, ...pinned, ...terms], run.userPrompt)
+	// A term's spelling in the other script goes last, so Whisper knows it too while room is left: Figma beside Фігма.
+	const scripts = vocabulary ? otherScripts(vocabulary, [...pinned, ...terms]) : []
+	const prompt = buildPrompt([...names, ...pinned, ...terms, ...scripts], run.userPrompt)
 	const hinted = Boolean(prompt) && prompt !== run.userPrompt?.trim()
 	return { prompt: hinted ? { init_prompt: prompt, carry_prompt: true } : null, draft }
 }

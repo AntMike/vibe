@@ -13,6 +13,8 @@ export interface LearnedTerm {
 	seen: number
 	/** The `recordings` count when it was last picked. */
 	last: number
+	/** Its other spellings: Figma beside Фігма, префабу beside префаб. All of them are listened for. */
+	forms?: string[]
 }
 
 export interface Vocabulary {
@@ -39,6 +41,8 @@ const FORGET_CANDIDATE_AFTER = 10
 const FORGET_KNOWN_AFTER = 40
 /** Enough for a team's names and projects without the prompt growing with every meeting. */
 const MAX_KNOWN = 80
+/** Spellings kept beside a term's own; the first ones stay. */
+const MAX_FORMS = 6
 
 export function emptyVocabulary(): Vocabulary {
 	return { version: 1, recordings: 0, pinned: [], blocked: [], terms: {} }
@@ -73,6 +77,18 @@ export function key(term: string) {
 	return stem.length >= 3 ? stem : latin
 }
 
+/** A term's entry, its forms without `main` and without repeats that differ only in case. */
+function entry(main: string, seen: number, last: number, forms: string[] = []): LearnedTerm {
+	const spelled = new Set([main.toLowerCase()])
+	const kept: string[] = []
+	for (const form of forms.map((form) => form.trim())) {
+		if (!form || spelled.has(form.toLowerCase())) continue
+		spelled.add(form.toLowerCase())
+		kept.push(form)
+	}
+	return kept.length > 0 ? { seen, last, forms: kept.slice(0, MAX_FORMS) } : { seen, last }
+}
+
 /** The vocabulary after one more recording that turned up `terms`. */
 export function learn(vocabulary: Vocabulary, terms: string[]): Vocabulary {
 	const recordings = vocabulary.recordings + 1
@@ -82,11 +98,16 @@ export function learn(vocabulary: Vocabulary, terms: string[]): Vocabulary {
 	const counted = new Set<string>()
 	for (const term of terms.map((term) => term.trim())) {
 		const id = key(term)
-		if (!term || blocked.has(id) || counted.has(id)) continue
-		counted.add(id)
+		if (!term || blocked.has(id)) continue
 		const known = spelling.get(id)
-		if (known) next[known] = { seen: next[known].seen + 1, last: recordings }
-		else next[term] = { seen: 1, last: recordings }
+		// A second spelling in the same recording joins the family without counting twice.
+		const seen = (known ? next[known].seen : 0) + (counted.has(id) ? 0 : 1)
+		counted.add(id)
+		if (known) next[known] = entry(known, seen, recordings, [...(next[known].forms ?? []), term])
+		else {
+			next[term] = { seen, last: recordings }
+			spelling.set(id, term)
+		}
 	}
 	for (const [term, { seen, last }] of Object.entries(next)) {
 		if (recordings - last >= (seen >= KNOWN_AFTER ? FORGET_KNOWN_AFTER : FORGET_CANDIDATE_AFTER)) delete next[term]
@@ -94,27 +115,48 @@ export function learn(vocabulary: Vocabulary, terms: string[]): Vocabulary {
 	return { ...vocabulary, recordings, terms: next }
 }
 
-/** The pinned terms, then learned ones seen often enough to trust, most used and most recent first. */
-export function knownTerms(vocabulary: Vocabulary): string[] {
+/**
+ * The pinned terms, then learned ones seen often enough to trust, most used and most recent first; each
+ * as its family, its own spelling first. A pinned term takes in the spellings learned for it.
+ */
+export function knownFamilies(vocabulary: Vocabulary): string[][] {
 	const blocked = new Set(vocabulary.blocked.map(key))
 	const pinned = new Set(vocabulary.pinned.map(key))
-	const learned = Object.entries(vocabulary.terms)
+	const learned = new Map(Object.entries(vocabulary.terms).map(([term, { forms }]) => [key(term), [term, ...(forms ?? [])]]))
+	const family = (term: string, forms?: string[]) => [term, ...(entry(term, 0, 0, forms).forms ?? [])]
+	const known = Object.entries(vocabulary.terms)
 		.filter(([term, { seen }]) => seen >= KNOWN_AFTER && !blocked.has(key(term)) && !pinned.has(key(term)))
 		.sort((a, b) => b[1].seen - a[1].seen || b[1].last - a[1].last)
-		.map(([term]) => term)
-	return [...vocabulary.pinned, ...learned].slice(0, MAX_KNOWN)
+		.map(([term, { forms }]) => family(term, forms))
+	return [...vocabulary.pinned.map((term) => family(term, learned.get(key(term)))), ...known].slice(0, MAX_KNOWN)
 }
 
-/** Spellings of one term, from before they were matched as one or typed in by hand, as the most seen of them. */
+export const knownTerms = (vocabulary: Vocabulary) => knownFamilies(vocabulary).map(([term]) => term)
+
+/** For each of `terms`, its family's spelling in the other script, if it has one: Figma for Фігма. */
+export function otherScripts(vocabulary: Vocabulary, terms: string[]): string[] {
+	const families = new Map(knownFamilies(vocabulary).map((family) => [key(family[0]), family]))
+	const latin = (term: string) => /\p{Script=Latin}/u.test(term)
+	return terms.flatMap((term) => (families.get(key(term)) ?? []).filter((form) => latin(form) !== latin(term)).slice(0, 1))
+}
+
+/** `a` and `b` as one term spelled `main`, with `forms`; a recording that had both counts once at most. */
+function joined(main: string, a: LearnedTerm, b: LearnedTerm, recordings: number, forms: string[]): LearnedTerm {
+	return entry(main, Math.min(recordings, a.seen + b.seen), Math.max(a.last, b.last), forms)
+}
+
+/** Entries of one family, from before they were matched as one or typed in by hand, as one under the most seen spelling. */
 function fold(terms: Record<string, LearnedTerm>, recordings: number): Record<string, LearnedTerm> {
 	const folded: Record<string, LearnedTerm> = {}
 	const spelling = new Map<string, string>()
-	for (const [term, entry] of Object.entries(terms)) {
+	for (const [term, next] of Object.entries(terms)) {
 		const other = spelling.get(key(term))
 		const prior = other ? folded[other] : undefined
-		if (other) delete folded[other]
-		const into = prior && prior.seen >= entry.seen ? other! : term
-		folded[into] = prior ? { seen: Math.min(recordings, prior.seen + entry.seen), last: Math.max(prior.last, entry.last) } : entry
+		const into = prior && prior.seen >= next.seen ? other! : term
+		if (prior) {
+			delete folded[other!]
+			folded[into] = joined(into, prior, next, recordings, [other!, term, ...(prior.forms ?? []), ...(next.forms ?? [])])
+		} else folded[into] = next
 		spelling.set(key(term), into)
 	}
 	return folded
@@ -147,14 +189,18 @@ export function tune(vocabulary: Vocabulary, tuning: Tuning): Vocabulary {
 		if (!from || !terms[from] || !to || to.toLowerCase() === from.toLowerCase()) continue
 		// The AI may write "вітя" for a name: it keeps its capital.
 		if (/^\p{Lu}/u.test(from)) to = to[0].toUpperCase() + to.slice(1)
-		const entry = terms[from]
+		const moved = terms[from]
 		delete terms[from]
 		if (blocked.has(key(to)) || pinned.has(key(to))) continue
+		// Spellings of one family stay as its forms; a mishearing (Moonblu for Мунблум) goes.
+		const kept = key(from) === key(to) ? [from, ...(moved.forms ?? [])] : []
 		const existing = spelling.get(key(to))
-		const into = existing && terms[existing] ? existing : to
-		const prior = terms[into]
-		terms[into] = prior ? { seen: Math.min(vocabulary.recordings, prior.seen + entry.seen), last: Math.max(prior.last, entry.last) } : entry
-		spelling.set(key(to), into)
+		const prior = existing ? terms[existing] : undefined
+		if (prior) {
+			delete terms[existing!]
+			terms[to] = joined(to, prior, moved, vocabulary.recordings, [existing!, ...(prior.forms ?? []), ...kept])
+		} else terms[to] = entry(to, moved.seen, moved.last, kept)
+		spelling.set(key(to), to)
 	}
 	for (const term of tuning.drop) {
 		const known = spelling.get(key(term))
@@ -177,11 +223,9 @@ export function parseTuning(reply: string): Tuning {
 	return { merge, drop }
 }
 
-/** `terms` without the blocked ones, each spelled as the vocabulary has it (a pinned spelling first): префабу as префаб. */
-export function spellAsKnown(vocabulary: Vocabulary, terms: string[]): string[] {
+export function dropBlocked(vocabulary: Vocabulary, terms: string[]): string[] {
 	const blocked = new Set(vocabulary.blocked.map(key))
-	const spelling = new Map([...Object.keys(vocabulary.terms), ...vocabulary.pinned].map((term) => [key(term), term]))
-	return terms.filter((term) => !blocked.has(key(term))).map((term) => spelling.get(key(term)) ?? term)
+	return terms.filter((term) => !blocked.has(key(term)))
 }
 
 /** Throws on a file that isn't a vocabulary, so a hand edit gone wrong is reported, not overwritten. */
@@ -191,8 +235,8 @@ export function parseVocabulary(text: string): Vocabulary {
 	const strings = (list: unknown) => (Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string') : [])
 	const recordings = Number.isFinite(value.recordings) ? value.recordings! : 0
 	const terms: Record<string, LearnedTerm> = {}
-	for (const [term, entry] of Object.entries(value.terms ?? {})) {
-		if (Number.isFinite(entry?.seen) && Number.isFinite(entry?.last)) terms[term] = { seen: entry.seen, last: entry.last }
+	for (const [term, item] of Object.entries(value.terms ?? {})) {
+		if (Number.isFinite(item?.seen) && Number.isFinite(item?.last)) terms[term] = entry(term, item.seen, item.last, strings(item.forms))
 	}
 	return {
 		version: 1,

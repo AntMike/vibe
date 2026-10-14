@@ -47,7 +47,7 @@ const CLI_CONTEXT_TOKENS = 100_000
 
 export const GLOSSARY_PROMPT = `Output only the requested content. No introductions, explanations, or commentary.
 
-Below is a rough automatic transcript of a recording; it has recognition mistakes. List the names of people, companies, products and places, and the specialized terms, that occur in it, spelled correctly and fixing obvious mishearings. Write each term the way it belongs in a transcript of the spoken language, never translated or transliterated: people's names and borrowed words that take the language's endings in its own script (Діма, префаб, спайн, колбек); only brand and product names in Latin (Figma, Unity, Claude). Skip everyday words. Include a term only when you can tell which real name, word or term it is; leave out garbled words you cannot resolve to one (a wrong term does more harm than a missing one). A person's name counts only when it is used as a name: someone addressed, or said to do something. Known participants: {speakers}. Terms known from earlier recordings: {known}. Spell a term as known when it is the same one, but list it only when it occurs in this transcript.
+Below is a rough automatic transcript of a recording; it has recognition mistakes. List the names of people, companies, products and places, and the specialized terms, that occur in it, spelled correctly and fixing obvious mishearings. Write each term the way it belongs in a transcript of the spoken language, never translated or transliterated: people's names and borrowed words that take the language's endings in its own script (Діма, префаб, спайн, колбек); only brand and product names in Latin (Figma, Unity, Claude). Skip everyday words. Include a term only when you can tell which real name, word or term it is; leave out garbled words you cannot resolve to one (a wrong term does more harm than a missing one). A person's name counts only when it is used as a name: someone addressed, or said to do something. Known participants: {speakers}. Terms known from earlier recordings, a term written several ways as A / B: {known}. Spell a term one of its known ways when it is the same one, but list it only when it occurs in this transcript.
 
 Answer with one comma-separated line of at most ${MAX_TERMS} terms, most important first.
 
@@ -57,7 +57,7 @@ Answer with one comma-separated line of at most ${MAX_TERMS} terms, most importa
 
 export const TUNE_PROMPT = `Output only the requested content. No introductions, explanations, or commentary.
 
-Below are names and terms picked out of rough automatic transcripts of one group's recordings, each with the number of recordings it came up in. Some are one name or term written several ways: other inflected forms, other cases or scripts, or mishearings of it. Some are everyday words, or garbled words that are no real name or term.
+Below are names and terms picked out of rough automatic transcripts of one group's recordings, each with the number of recordings it came up in and the other ways it was written, which stay with it. Some are one name or term written several ways: other inflected forms, other cases or scripts, or mishearings of it. Some are everyday words, or garbled words that are no real name or term.
 
 Answer with JSON only: {"merge": {"variant": "term", ...}, "drop": ["term", ...]}
 - merge: each variant to the one spelling its term should have, usually its most frequent entry. Write the term the way it belongs in a transcript of the spoken language, never translated or transliterated: people's names and borrowed words that take the language's endings in its own script and in their base form (Вітя, not Віті; префаб); only brand and product names in Latin (Figma, Unity, Claude).
@@ -154,7 +154,7 @@ export function dueForTuning(vocabulary: Vocabulary, settings: HintsSettings) {
 export async function tuneVocabulary(vocabulary: Vocabulary, settings: HintsSettings, connection: AiConnection): Promise<Vocabulary> {
 	const terms = Object.entries(vocabulary.terms)
 		.sort((a, b) => b[1].seen - a[1].seen)
-		.map(([term, { seen }]) => `${term} (${seen})`)
+		.map(([term, { seen, forms }]) => `${term} (${seen}${forms ? `; also ${forms.join(', ')}` : ''})`)
 		.join('\n')
 	const prompt = TUNE_PROMPT.replace('{pinned}', () => vocabulary.pinned.join(', ') || 'none').replace('{terms}', () => terms)
 	return tune(vocabulary, parseTuning(await createClient(hintsConnection(settings, connection), { unloadAfter: true }).ask(prompt)))

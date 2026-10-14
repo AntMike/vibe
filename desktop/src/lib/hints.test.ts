@@ -83,8 +83,8 @@ describe('refineDraft', () => {
 		invokeMock.mockReset()
 		invokeMock.mockResolvedValue('Mumblum')
 		const connection = { ...DEFAULT_AI.connection, platform: 'cli' as const, cli: 'claude' as const }
-		await refineDraft(['по мумблуму'], [], { ...DEFAULT_HINTS, refiner: 'ai' }, connection, ['Mumblum', 'ШІ'])
-		expect(invokeMock.mock.calls[0][1].prompt).toContain('Terms known from earlier recordings: Mumblum, ШІ.')
+		await refineDraft(['по мумблуму'], [], { ...DEFAULT_HINTS, refiner: 'ai' }, connection, ['Mumblum / Мумблум', 'ШІ'])
+		expect(invokeMock.mock.calls[0][1].prompt).toContain('a term written several ways as A / B: Mumblum / Мумблум, ШІ.')
 	})
 
 	it('needs no AI for the free refiner', async () => {
