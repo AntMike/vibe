@@ -133,7 +133,7 @@ fn decode_windows_executable_key(key: &str) -> String {
 mod platform {
     use crate::{MicUsage, ProcessInfo};
     use std::path::Path;
-    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 
     const CONSENT_STORE: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
@@ -206,24 +206,105 @@ mod platform {
         }
     }
 
-    pub(super) fn current_usage() -> MicUsage {
-        let Ok(store) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(CONSENT_STORE) else {
-            return MicUsage::default();
+    /// Processes with a running capture stream on any microphone, straight from the audio engine.
+    fn capture_session_pids() -> windows::core::Result<Vec<u32>> {
+        use windows::core::Interface;
+        use windows::Win32::Foundation::S_OK;
+        use windows::Win32::Media::Audio::{
+            eCapture, AudioSessionStateActive, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+            MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
         };
+        use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+
+        thread_local! {
+            // Once per thread. A thread that is already STA reports RPC_E_CHANGED_MODE, and COM works there too.
+            static COM: () = unsafe { _ = CoInitializeEx(None, COINIT_MULTITHREADED) };
+        }
+        COM.with(|_| ());
+        let mut pids = Vec::new();
+        unsafe {
+            let devices: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+            let mics = devices.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)?;
+            for m in 0..mics.GetCount()? {
+                let manager: IAudioSessionManager2 = mics.Item(m)?.Activate(CLSCTX_ALL, None)?;
+                let sessions = manager.GetSessionEnumerator()?;
+                for s in 0..sessions.GetCount()? {
+                    let session: IAudioSessionControl2 = sessions.GetSession(s)?.cast()?;
+                    if session.GetState()? != AudioSessionStateActive || session.IsSystemSoundsSession() == S_OK {
+                        continue;
+                    }
+                    let pid = session.GetProcessId()?;
+                    if pid != 0 && !pids.contains(&pid) {
+                        pids.push(pid);
+                    }
+                }
+            }
+        }
+        Ok(pids)
+    }
+
+    /// Who owns each capture session. Electron apps capture from a child of the same exe, and
+    /// WebView2 hosts from `msedgewebview2.exe`, so the first ancestor that is a meeting app wins.
+    // ponytail: full process refresh on every poll while any mic is open; cache by pid if it shows in CPU.
+    fn session_owners() -> Vec<ProcessInfo> {
+        let pids = capture_session_pids().unwrap_or_else(|error| {
+            tracing::debug!("capture sessions: {error}");
+            Vec::new()
+        });
+        if pids.is_empty() {
+            return Vec::new();
+        }
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+        );
+        let info = |process: &sysinfo::Process| ProcessInfo {
+            pid: None,
+            name: process.name().to_string_lossy().into_owned(),
+            executable: process.exe().map(|exe| exe.to_string_lossy().into_owned()),
+            bundle_id: None,
+        };
+        pids.into_iter()
+            .filter_map(|pid| {
+                let own = system.process(Pid::from_u32(pid))?;
+                let ancestors = std::iter::successors(Some(own), |p| p.parent().and_then(|parent| system.process(parent)));
+                // Bounded: a dead parent's pid can be reused by a descendant, making the chain a loop.
+                let owner = ancestors
+                    .take(16)
+                    .map(info)
+                    .find(|owner| crate::process::source(owner).is_some())
+                    .unwrap_or_else(|| info(own));
+                Some(owner)
+            })
+            .collect()
+    }
+
+    pub(super) fn current_usage() -> MicUsage {
         let mut processes = Vec::new();
-        for child_name in store.enum_keys().flatten() {
-            let Ok(child) = store.open_subkey(&child_name) else {
-                continue;
-            };
-            if child_name.eq_ignore_ascii_case("NonPackaged") {
-                collect_nonpackaged(&child, None, &mut processes);
-            } else if is_active(&child) {
-                processes.push(ProcessInfo {
-                    pid: None,
-                    name: child_name.clone(),
-                    executable: None,
-                    bundle_id: Some(child_name),
-                });
+        // ponytail: since Windows update KB5127648 (build 26300.9711) the consent store stopped recording mic
+        // use; kept for systems where it still does, the capture sessions below are what actually see a call.
+        if let Ok(store) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(CONSENT_STORE) {
+            for child_name in store.enum_keys().flatten() {
+                let Ok(child) = store.open_subkey(&child_name) else {
+                    continue;
+                };
+                if child_name.eq_ignore_ascii_case("NonPackaged") {
+                    collect_nonpackaged(&child, None, &mut processes);
+                } else if is_active(&child) {
+                    processes.push(ProcessInfo {
+                        pid: None,
+                        name: child_name.clone(),
+                        executable: None,
+                        bundle_id: Some(child_name),
+                    });
+                }
+            }
+        }
+        for owner in session_owners() {
+            if !processes.contains(&owner) {
+                processes.push(owner);
             }
         }
         attach_pids(&mut processes);
