@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use crate::encoder::{build_encoder, build_pre_encode, full_mask, positional_embedding};
+use crate::encoder::{build_pre_encode, EncoderShape, EncoderWeights};
 use crate::load::lookup_tensor;
 use crate::runtime::Graph;
 use crate::MelFeatures;
@@ -242,37 +242,7 @@ impl Model {
     }
 
     pub fn encode(&self, features: &MelFeatures) -> Result<(Vec<f32>, [i64; 3])> {
-        unsafe {
-            let runtime = crate::runtime::accelerated_runtime(self.device.as_ref().map(|device| device.backend))?;
-            let mut graph = Graph::new()?;
-            let input = sys::ggml_new_tensor_4d(
-                graph.ctx,
-                sys::ggml_type_GGML_TYPE_F32,
-                features.num_frames as i64,
-                features.num_mels as i64,
-                1,
-                1,
-            );
-            let built = build_encoder(graph.ctx, self, input, self.device.is_none());
-            graph.output(built.output);
-            let time = (*built.output).ne[1] as usize;
-            let positions = positional_embedding(self.info.encoder_dimension as usize, time);
-            let mask = full_mask(time);
-            runtime.execute(
-                &mut graph,
-                &[(input, &features.data), (built.position, &positions), (built.mask, &mask)],
-            )?;
-            let shape = [(*built.output).ne[0], (*built.output).ne[1], (*built.output).ne[2]];
-            let count = shape.iter().product::<i64>() as usize;
-            let mut data = vec![0.0f32; count];
-            sys::ggml_backend_tensor_get(built.output, data.as_mut_ptr().cast(), 0, data.len() * 4);
-            let min = data.iter().copied().fold(f32::INFINITY, f32::min);
-            let max = data.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            let mean = data.iter().sum::<f32>() / data.len().max(1) as f32;
-            let rms = (data.iter().map(|value| value * value).sum::<f32>() / data.len().max(1) as f32).sqrt();
-            eprintln!("[parakeet][encoder] shape={shape:?} min={min:.6} max={max:.6} mean={mean:.6} rms={rms:.6}");
-            Ok((data, shape))
-        }
+        crate::encoder::encode(self, features)
     }
 
     pub(crate) fn tensor(&self, name: &str) -> Option<*mut sys::ggml_tensor> {
@@ -284,5 +254,25 @@ impl Model {
 
     pub(crate) fn cpu_tensor(&self, name: &str) -> Option<*mut sys::ggml_tensor> {
         lookup_tensor(self.weights, name)
+    }
+}
+
+impl EncoderWeights for Model {
+    fn tensor(&self, name: &str) -> Option<*mut sys::ggml_tensor> {
+        Model::tensor(self, name)
+    }
+
+    fn encoder_shape(&self) -> EncoderShape {
+        EncoderShape {
+            layers: self.info.encoder_layers,
+            dimension: self.info.encoder_dimension,
+            heads: self.info.encoder_heads,
+            conv_kernel: self.info.encoder_conv_kernel,
+            xscaling: self.info.encoder_xscaling,
+        }
+    }
+
+    fn backend(&self) -> Option<sys::ggml_backend_t> {
+        self.device.as_ref().map(|device| device.backend)
     }
 }

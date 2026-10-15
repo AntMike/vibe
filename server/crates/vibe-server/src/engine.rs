@@ -28,6 +28,10 @@ pub enum Engine {
         model: Box<parakeet_rs::Model>,
         vad: Option<(String, vad_rs::Vad)>,
     },
+    Canary {
+        model: Box<parakeet_rs::canary::Model>,
+        vad: Option<(String, vad_rs::Vad)>,
+    },
 }
 
 impl Engine {
@@ -36,17 +40,23 @@ impl Engine {
         match self {
             // Stable timestamps already cut the audio on VAD and ignores windows.
             Self::Whisper(_) => !options.stable_timestamps,
-            Self::Parakeet { .. } => true,
+            Self::Parakeet { .. } | Self::Canary { .. } => true,
             Self::Nemotron { .. } => false,
         }
     }
 
     pub fn requires_vad(&self) -> bool {
-        matches!(self, Self::Nemotron { .. } | Self::Parakeet { .. })
+        matches!(self, Self::Nemotron { .. } | Self::Parakeet { .. } | Self::Canary { .. })
     }
 
     pub fn load(path: &str, options: ContextOptions) -> anyhow::Result<Self> {
         if path.ends_with(".gguf") {
+            if parakeet_rs::canary::Model::metadata(path).is_ok() {
+                return Ok(Self::Canary {
+                    model: Box::new(parakeet_rs::canary::Model::load(path)?),
+                    vad: None,
+                });
+            }
             if let Ok(info) = parakeet_rs::Model::metadata(path) {
                 if info.architecture == "parakeet" && info.variant.contains("v3") {
                     return Ok(Self::Parakeet {
@@ -57,7 +67,8 @@ impl Engine {
             }
             // A GGUF file is never a whisper model, so report why the GGUF
             // engines rejected it instead of handing it to whisper.cpp.
-            let model = nemotron_rs::Model::load(path).context("GGUF file could not be loaded as Parakeet or Nemotron")?;
+            let model =
+                nemotron_rs::Model::load(path).context("GGUF file could not be loaded as Canary, Parakeet or Nemotron")?;
             return Ok(Self::Nemotron {
                 model: Box::new(model),
                 vad: None,
@@ -108,7 +119,7 @@ impl Engine {
                         .collect(),
                 })
             }
-            Self::Parakeet { .. } => self.transcribe_stream(samples, options, StreamCallbacks::default()),
+            Self::Parakeet { .. } | Self::Canary { .. } => self.transcribe_stream(samples, options, StreamCallbacks::default()),
         }
     }
 
@@ -176,7 +187,7 @@ impl Engine {
                 } else {
                     options.language.as_deref().unwrap_or("en")
                 };
-                let vad = parakeet_vad(vad, options.vad_model_path.as_deref())?;
+                let vad = cached_vad(vad, options.vad_model_path.as_deref())?;
                 let StreamCallbacks {
                     mut on_progress,
                     mut on_segment,
@@ -184,15 +195,7 @@ impl Engine {
                 } = callbacks;
                 // Each window (a speaker turn) is cut on VAD and decoded on its
                 // own, so no sentence runs across two speakers.
-                let windows = if options.windows.is_empty() {
-                    vec![Window {
-                        start_sample: 0,
-                        end_sample: samples.len(),
-                        group: 0,
-                    }]
-                } else {
-                    options.windows.clone()
-                };
+                let windows = windows_or_whole(&options, samples.len());
                 let runs = options.draft_runs.clamp(1, 8) as usize;
                 let boost = parakeet_rs::Boost::new(model.tokenizer(), &options.hotwords);
                 let total = windows
@@ -302,6 +305,67 @@ impl Engine {
                 }
                 Ok(TranscribeResult { segments })
             }
+            Self::Canary { model, vad } => {
+                if options.prompt.is_some() {
+                    bail!("Canary does not support text prompts");
+                }
+                if options.detect_language {
+                    bail!("Canary cannot detect the language; pick the one spoken");
+                }
+                let source = options.language.as_deref().unwrap_or("en");
+                // Whisper's translate means into English, which Canary does from
+                // each of its languages.
+                let target = if options.translate { "en" } else { source };
+                let vad = cached_vad(vad, options.vad_model_path.as_deref())?;
+                let StreamCallbacks {
+                    mut on_progress,
+                    mut on_segment,
+                    mut should_abort,
+                } = callbacks;
+                let windows = windows_or_whole(&options, samples.len());
+                let total = windows
+                    .iter()
+                    .map(|window| window.end_sample.saturating_sub(window.start_sample))
+                    .sum::<usize>()
+                    .max(1);
+                let mut done = 0;
+                let mut segments = Vec::new();
+                for window in windows {
+                    let end = window.end_sample.min(samples.len());
+                    let start = window.start_sample.min(end);
+                    let len = end - start;
+                    model
+                        .transcribe_with(
+                            vad,
+                            &samples[start..end],
+                            source,
+                            target,
+                            || should_abort.as_mut().is_some_and(|callback| callback()),
+                            |segment| {
+                                // ponytail: one line per VAD chunk, as Canary has no
+                                // word timings; split on sentences if lines run long.
+                                let segment = Segment {
+                                    start: ((start + segment.start_sample) / 160) as i64,
+                                    end: ((start + segment.end_sample) / 160) as i64,
+                                    text: segment.text.clone(),
+                                    no_speech_prob: 0.0,
+                                };
+                                if let Some(callback) = on_segment.as_mut() {
+                                    callback(segment.clone());
+                                }
+                                segments.push(segment);
+                            },
+                            |progress| {
+                                if let Some(callback) = on_progress.as_mut() {
+                                    callback(((done + len * progress as usize / 100) * 100 / total) as i32);
+                                }
+                            },
+                        )
+                        .context("Canary inference failed")?;
+                    done += len;
+                }
+                Ok(TranscribeResult { segments })
+            }
         }
     }
 
@@ -328,7 +392,21 @@ impl Engine {
                 timestamps: true,
                 text_prompts: false,
             },
+            Self::Canary { model, .. } => canary_capabilities(model.info()),
         }
+    }
+}
+
+pub fn canary_capabilities(info: &parakeet_rs::canary::ModelInfo) -> EngineCapabilities {
+    EngineCapabilities {
+        engine: "canary".to_string(),
+        requires_vad: true,
+        languages: info.languages.clone(),
+        language_detection: false,
+        streaming: false,
+        translation: true,
+        timestamps: true,
+        text_prompts: false,
     }
 }
 
@@ -369,8 +447,21 @@ fn validate_parakeet_options(options: &TranscribeOptions) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn parakeet_vad<'a>(cached: &'a mut Option<(String, vad_rs::Vad)>, path: Option<&str>) -> anyhow::Result<&'a mut vad_rs::Vad> {
-    let path = path.context("vad_model_path is required for Parakeet")?;
+/// The windows to transcribe on their own, or the whole recording as one.
+fn windows_or_whole(options: &TranscribeOptions, len: usize) -> Vec<Window> {
+    if options.windows.is_empty() {
+        vec![Window {
+            start_sample: 0,
+            end_sample: len,
+            group: 0,
+        }]
+    } else {
+        options.windows.clone()
+    }
+}
+
+fn cached_vad<'a>(cached: &'a mut Option<(String, vad_rs::Vad)>, path: Option<&str>) -> anyhow::Result<&'a mut vad_rs::Vad> {
+    let path = path.context("vad_model_path is required for this engine")?;
     if cached.as_ref().is_none_or(|(cached_path, _)| cached_path != path) {
         *cached = Some((path.to_owned(), vad_rs::Vad::new(path, vad_rs::Options::default())?));
     }

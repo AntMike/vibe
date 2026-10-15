@@ -11,6 +11,17 @@ pub struct Tokenizer {
 
 impl Tokenizer {
     pub(crate) unsafe fn load(ctx: *const sys::gguf_context) -> Result<Self> {
+        let blank_id = optional_uint(ctx, "tokenizer.ggml.blank_token_id")
+            .or_else(|| optional_uint(ctx, "parakeet.blank_id"))
+            .ok_or(Error::MissingMetadata("tokenizer.ggml.blank_token_id"))?;
+        Ok(Self {
+            blank_id,
+            ..Self::load_pieces(ctx)?
+        })
+    }
+
+    /// The vocabulary alone, for a decoder with no blank token (Canary).
+    pub(crate) unsafe fn load_pieces(ctx: *const sys::gguf_context) -> Result<Self> {
         let model = optional_string(ctx, "tokenizer.ggml.model").unwrap_or_else(|| "bpe".into());
         if model != "bpe" && model != "unigram" {
             return Err(Error::InvalidMetadata {
@@ -20,11 +31,17 @@ impl Tokenizer {
         }
         Ok(Self {
             tokens: strings(ctx, "tokenizer.ggml.tokens")?,
-            blank_id: optional_uint(ctx, "tokenizer.ggml.blank_token_id")
-                .or_else(|| optional_uint(ctx, "parakeet.blank_id"))
-                .ok_or(Error::MissingMetadata("tokenizer.ggml.blank_token_id"))?,
+            blank_id: u32::MAX,
             unknown_id: optional_uint(ctx, "tokenizer.ggml.unknown_token_id").unwrap_or(0),
         })
+    }
+
+    /// The id of an exact piece, such as a control token.
+    pub fn find(&self, piece: &str) -> Option<u32> {
+        self.tokens
+            .iter()
+            .position(|candidate| candidate == piece)
+            .map(|id| id as u32)
     }
 
     #[cfg(test)]

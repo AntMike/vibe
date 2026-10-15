@@ -29,6 +29,11 @@ impl CpuRuntime {
         }
     }
 
+    /// The backend graphs run on, for tensors that outlive one graph (a KV cache).
+    pub fn backend(&self) -> sys::ggml_backend_t {
+        self.backend
+    }
+
     pub unsafe fn execute(&self, graph: &mut Graph, inputs: &[(*mut sys::ggml_tensor, &[f32])]) -> Result<()> {
         let started = Instant::now();
         let nodes = sys::ggml_graph_n_nodes(graph.graph);

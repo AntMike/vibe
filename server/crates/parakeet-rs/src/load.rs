@@ -273,6 +273,36 @@ impl DeviceWeights {
     }
 }
 
+/// Opens a GGUF: its metadata, and its tensors unless `metadata_only`. Free
+/// both with [`free_gguf`].
+pub(crate) fn open_gguf(path: &Path, metadata_only: bool) -> Result<(*mut sys::gguf_context, *mut sys::ggml_context)> {
+    let path = CString::new(path.to_string_lossy().as_bytes()).map_err(|_| Error::InvalidPath)?;
+    let mut weights = ptr::null_mut();
+    let gguf = unsafe {
+        sys::gguf_init_from_file(
+            path.as_ptr(),
+            sys::gguf_init_params {
+                no_alloc: metadata_only,
+                ctx: &mut weights,
+            },
+        )
+    };
+    if gguf.is_null() || (!metadata_only && weights.is_null()) {
+        unsafe { free_gguf(gguf, weights) };
+        return Err(Error::Load(path.to_string_lossy().into_owned()));
+    }
+    Ok((gguf, weights))
+}
+
+pub(crate) unsafe fn free_gguf(gguf: *mut sys::gguf_context, weights: *mut sys::ggml_context) {
+    if !weights.is_null() {
+        sys::ggml_free(weights);
+    }
+    if !gguf.is_null() {
+        sys::gguf_free(gguf);
+    }
+}
+
 unsafe fn read_info(ctx: *const sys::gguf_context) -> Result<ModelInfo> {
     if find_key(ctx, "stt.variant").is_none() {
         return Ok(ModelInfo {
@@ -327,7 +357,7 @@ const V3_LANGUAGES: &[&str] = &[
     "sl", "es", "sv", "uk",
 ];
 
-unsafe fn find_key(ctx: *const sys::gguf_context, name: &str) -> Option<i64> {
+pub(crate) unsafe fn find_key(ctx: *const sys::gguf_context, name: &str) -> Option<i64> {
     let name = CString::new(name).ok()?;
     let id = sys::gguf_find_key(ctx, name.as_ptr());
     (id >= 0).then_some(id)
@@ -396,7 +426,7 @@ unsafe fn key(ctx: *const sys::gguf_context, name: &'static str) -> Result<i64> 
     (id >= 0).then_some(id).ok_or(Error::MissingMetadata(name))
 }
 
-unsafe fn string(ctx: *const sys::gguf_context, name: &'static str) -> Result<String> {
+pub(crate) unsafe fn string(ctx: *const sys::gguf_context, name: &'static str) -> Result<String> {
     let value = sys::gguf_get_val_str(ctx, key(ctx, name)?);
     if value.is_null() {
         return Err(Error::InvalidMetadata {
@@ -407,7 +437,7 @@ unsafe fn string(ctx: *const sys::gguf_context, name: &'static str) -> Result<St
     Ok(CStr::from_ptr(value).to_string_lossy().into_owned())
 }
 
-unsafe fn strings(ctx: *const sys::gguf_context, name: &'static str) -> Result<Vec<String>> {
+pub(crate) unsafe fn strings(ctx: *const sys::gguf_context, name: &'static str) -> Result<Vec<String>> {
     let id = key(ctx, name)?;
     let count = sys::gguf_get_arr_n(ctx, id);
     (0..count)
@@ -425,11 +455,11 @@ unsafe fn strings(ctx: *const sys::gguf_context, name: &'static str) -> Result<V
         .collect()
 }
 
-unsafe fn u32_value(ctx: *const sys::gguf_context, name: &'static str) -> Result<u32> {
+pub(crate) unsafe fn u32_value(ctx: *const sys::gguf_context, name: &'static str) -> Result<u32> {
     Ok(sys::gguf_get_val_u32(ctx, key(ctx, name)?))
 }
 
-unsafe fn optional_u32(ctx: *const sys::gguf_context, name: &'static str) -> Option<u32> {
+pub(crate) unsafe fn optional_u32(ctx: *const sys::gguf_context, name: &'static str) -> Option<u32> {
     let c_name = CString::new(name).unwrap();
     let id = sys::gguf_find_key(ctx, c_name.as_ptr());
     (id >= 0).then(|| sys::gguf_get_val_u32(ctx, id))
@@ -448,11 +478,11 @@ unsafe fn i32_array(ctx: *const sys::gguf_context, name: &'static str) -> Result
     Ok(std::slice::from_raw_parts(data, count).to_vec())
 }
 
-unsafe fn bool_value(ctx: *const sys::gguf_context, name: &'static str) -> Result<bool> {
+pub(crate) unsafe fn bool_value(ctx: *const sys::gguf_context, name: &'static str) -> Result<bool> {
     Ok(sys::gguf_get_val_bool(ctx, key(ctx, name)?))
 }
 
-unsafe fn optional_bool(ctx: *const sys::gguf_context, name: &'static str) -> Option<bool> {
+pub(crate) unsafe fn optional_bool(ctx: *const sys::gguf_context, name: &'static str) -> Option<bool> {
     let c_name = CString::new(name).unwrap();
     let id = sys::gguf_find_key(ctx, c_name.as_ptr());
     (id >= 0).then(|| sys::gguf_get_val_bool(ctx, id))

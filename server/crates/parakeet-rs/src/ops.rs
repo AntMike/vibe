@@ -14,17 +14,19 @@ pub(crate) unsafe fn layer_norm(ctx: Context, x: Tensor, gamma: Tensor, beta: Te
     y
 }
 
+/// `x + bias`, or `x` when the model ships no bias (null).
+pub(crate) unsafe fn add_bias(ctx: Context, x: Tensor, bias: Tensor) -> Tensor {
+    if bias.is_null() {
+        x
+    } else {
+        sys::ggml_add(ctx, x, bias)
+    }
+}
+
 pub(crate) unsafe fn feed_forward(ctx: Context, x: Tensor, w1: Tensor, b1: Tensor, w2: Tensor, b2: Tensor) -> Tensor {
-    let mut y = sys::ggml_mul_mat(ctx, w1, x);
-    if !b1.is_null() {
-        y = sys::ggml_add(ctx, y, b1);
-    }
-    y = sys::ggml_silu(ctx, y);
-    y = sys::ggml_mul_mat(ctx, w2, y);
-    if !b2.is_null() {
-        y = sys::ggml_add(ctx, y, b2);
-    }
-    y
+    let y = add_bias(ctx, sys::ggml_mul_mat(ctx, w1, x), b1);
+    let y = sys::ggml_silu(ctx, y);
+    add_bias(ctx, sys::ggml_mul_mat(ctx, w2, y), b2)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -105,10 +107,10 @@ pub(crate) unsafe fn attention(
     x: Tensor,
     pos: Tensor,
     mask: Tensor,
-    q_w: Tensor,
-    k_w: Tensor,
-    v_w: Tensor,
-    out_w: Tensor,
+    (q_w, q_b): (Tensor, Tensor),
+    (k_w, k_b): (Tensor, Tensor),
+    (v_w, v_b): (Tensor, Tensor),
+    (out_w, out_b): (Tensor, Tensor),
     pos_w: Tensor,
     bias_u: Tensor,
     bias_v: Tensor,
@@ -119,9 +121,9 @@ pub(crate) unsafe fn attention(
     let batch = (*x).ne[2];
     let head = d_model / heads;
     let scale = 1.0 / (head as f32).sqrt();
-    let mut q = sys::ggml_mul_mat(ctx, q_w, x);
-    let mut k = sys::ggml_mul_mat(ctx, k_w, x);
-    let mut v = sys::ggml_mul_mat(ctx, v_w, x);
+    let mut q = add_bias(ctx, sys::ggml_mul_mat(ctx, q_w, x), q_b);
+    let mut k = add_bias(ctx, sys::ggml_mul_mat(ctx, k_w, x), k_b);
+    let mut v = add_bias(ctx, sys::ggml_mul_mat(ctx, v_w, x), v_b);
     let mut p = sys::ggml_mul_mat(ctx, pos_w, pos);
     q = sys::ggml_reshape_4d(ctx, q, head, heads, time, batch);
     let mut qu = sys::ggml_add(ctx, q, bias_u);
@@ -157,20 +159,20 @@ pub(crate) unsafe fn attention(
     v = sys::ggml_cast(ctx, v, sys::ggml_type_GGML_TYPE_F16);
     let mut output = sys::ggml_flash_attn_ext(ctx, qu, k, v, relative, scale, 0.0, 0.0);
     output = sys::ggml_reshape_3d(ctx, output, d_model, time, batch);
-    sys::ggml_mul_mat(ctx, out_w, output)
+    add_bias(ctx, sys::ggml_mul_mat(ctx, out_w, output), out_b)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn conv_module(
     ctx: Context,
     x: Tensor,
-    pw1_w: Tensor,
-    dw_w: Tensor,
+    (pw1_w, pw1_b): (Tensor, Tensor),
+    (dw_w, dw_b): (Tensor, Tensor),
     norm_w: Tensor,
     norm_b: Tensor,
     running_mean: Tensor,
     running_var: Tensor,
-    pw2_w: Tensor,
+    (pw2_w, pw2_b): (Tensor, Tensor),
     d_model: i64,
     kernel: i64,
     promote_pointwise: bool,
@@ -188,7 +190,7 @@ pub(crate) unsafe fn conv_module(
         pw2_w
     };
     let pw1 = sys::ggml_reshape_2d(ctx, pw1_w, d_model, 2 * d_model);
-    let mut y = sys::ggml_mul_mat(ctx, pw1, x);
+    let mut y = add_bias(ctx, sys::ggml_mul_mat(ctx, pw1, x), pw1_b);
     let gate = sys::ggml_view_3d(ctx, y, d_model, time, batch, (*y).nb[1], (*y).nb[2], 0);
     let value = sys::ggml_view_3d(
         ctx,
@@ -217,10 +219,14 @@ pub(crate) unsafe fn conv_module(
     let data4 = sys::ggml_reshape_4d(ctx, y, (*y).ne[0], 1, d_model, batch);
     y = conv_2d_depthwise(ctx, kernel4, data4, 1, 1, 0, 0);
     y = sys::ggml_reshape_3d(ctx, y, (*y).ne[0], d_model, batch);
-    y = sys::ggml_cont(ctx, sys::ggml_permute(ctx, y, 1, 0, 2, 3));
+    y = add_bias(ctx, sys::ggml_cont(ctx, sys::ggml_permute(ctx, y, 1, 0, 2, 3)), dw_b);
     let epsilon = sys::ggml_fill(ctx, sys::ggml_dup_tensor(ctx, running_var), 1.0e-5);
     let scale = sys::ggml_div(ctx, norm_w, sys::ggml_sqrt(ctx, sys::ggml_add(ctx, running_var, epsilon)));
     y = sys::ggml_add(ctx, sys::ggml_mul(ctx, sys::ggml_sub(ctx, y, running_mean), scale), norm_b);
     y = sys::ggml_silu(ctx, y);
-    sys::ggml_mul_mat(ctx, sys::ggml_reshape_2d(ctx, pw2_w, d_model, d_model), y)
+    add_bias(
+        ctx,
+        sys::ggml_mul_mat(ctx, sys::ggml_reshape_2d(ctx, pw2_w, d_model, d_model), y),
+        pw2_b,
+    )
 }

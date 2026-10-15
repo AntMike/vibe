@@ -1,6 +1,7 @@
-//! Native Parakeet ASR inference built on vibe-server's shared GGML runtime.
+//! Native Parakeet and Canary ASR inference built on vibe-server's shared GGML runtime.
 
 mod boost;
+pub mod canary;
 mod decoder;
 mod encoder;
 mod load;
@@ -29,7 +30,7 @@ pub enum Error {
     MissingMetadata(&'static str),
     #[error("invalid GGUF metadata {key}: {message}")]
     InvalidMetadata { key: &'static str, message: String },
-    #[error("unsupported model architecture {0:?}; expected parakeet")]
+    #[error("unsupported model architecture {0:?}")]
     UnsupportedArchitecture(String),
     #[error("unsupported Parakeet head {0:?}; expected tdt")]
     UnsupportedHead(String),
