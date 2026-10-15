@@ -205,7 +205,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	// Off by default: holding a laptop awake around the clock is not something to opt someone into.
 	const [preventSleep, setPreventSleep] = usePersisted<boolean>(CONFIG_KEYS.preventSleep, false)
 	const [textAreaDirection, setTextAreaDirection] = usePersisted<Direction>(CONFIG_KEYS.textAreaDirection, 'ltr')
-	const [textFormatTranscript, setTextFormatTranscript] = usePersisted<TextFormat>(CONFIG_KEYS.textFormatTranscript, 'pdf')
+	const [textFormatTranscript, setTextFormatTranscript] = usePersisted<TextFormat>(CONFIG_KEYS.textFormatTranscript, 'md')
 	const [textFormatSummary, setTextFormatSummary] = usePersisted<TextFormat>(CONFIG_KEYS.textFormatSummary, 'md')
 	const isMounted = useRef<boolean>(false)
 	const [theme, setTheme] = usePersisted<'dark' | 'light'>(CONFIG_KEYS.theme, systemIsDark ? 'dark' : 'light')

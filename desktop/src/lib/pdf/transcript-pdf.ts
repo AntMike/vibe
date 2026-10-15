@@ -18,7 +18,7 @@ export interface TranscriptPdfLabels {
  */
 export async function transcriptToPdf(segments: Segment[], summary: string, options: TranscriptExportOptions, labels: TranscriptPdfLabels) {
 	const [{ Font, pdf }, { PDF_FONT, TranscriptDocument }] = await Promise.all([import('@react-pdf/renderer'), import('./transcript-document')])
-	// Rubik carries Latin, Hebrew and Cyrillic in one family, so a mixed transcript needs no font
+	// Rubik, subset to Latin, Cyrillic and Hebrew, carries all three in one family, so a mixed transcript needs no font
 	// switching. Registering again is harmless; react-pdf keeps the last source for each weight.
 	Font.register({
 		family: PDF_FONT,

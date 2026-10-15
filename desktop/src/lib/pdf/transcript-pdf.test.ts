@@ -25,6 +25,8 @@ const HEBREW: Segment[] = [
 
 const ENGLISH: Segment[] = [{ start: 0, stop: 4000, text: 'An English line with עברית inside it and 42 numbers.', speaker: 0 }]
 
+const UKRAINIAN: Segment[] = [{ start: 0, stop: 4000, text: 'Сьогодні в’яжу ґудзики: їжак, єнот, Gamehood.', speaker: 0 }]
+
 function options(direction: 'rtl' | 'ltr'): TranscriptExportOptions {
 	return {
 		content: 'transcript',
@@ -104,6 +106,12 @@ describe('transcript pdf', () => {
 	it('leaves a left-to-right document alone', async () => {
 		const text = await extractText(await renderPdf(ENGLISH, 'ltr'))
 		expect(readsInOrder(text, ENGLISH[0].text)).toBe(true)
+	}, 30_000)
+
+	// A font without Cyrillic falls back to Helvetica, which draws Ukrainian as Latin garbage.
+	it('draws Ukrainian with the embedded font', async () => {
+		const text = await extractText(await renderPdf(UKRAINIAN, 'ltr'))
+		expect(readsInOrder(text, UKRAINIAN[0].text)).toBe(true)
 	}, 30_000)
 
 	it('keeps the fonts embedded, so the text is real rather than an image', async () => {
