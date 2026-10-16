@@ -69,6 +69,9 @@ pub struct VerboseSegment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker: Option<usize>,
     pub no_speech_prob: f32,
+    /// The language this segment was decoded in, or detected in with `detect_language`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 pub fn build_verbose_json(result: &TranscribeResult, diar_segments: &[diarization::Segment]) -> VerboseJson {
@@ -83,6 +86,7 @@ pub fn build_verbose_json(result: &TranscribeResult, diar_segments: &[diarizatio
                 text: segment.text.clone(),
                 speaker: match_speaker(cs_to_seconds(segment.start), cs_to_seconds(segment.end), diar_segments),
                 no_speech_prob: segment.no_speech_prob,
+                language: segment.language.clone(),
             })
             .collect(),
     }

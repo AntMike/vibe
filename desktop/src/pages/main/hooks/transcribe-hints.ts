@@ -3,6 +3,7 @@ import type { AiConnection } from '~/lib/ai'
 import type { CallSpeakerTurn } from '~/lib/call-speakers'
 import * as config from '~/lib/config'
 import { buildPrompt, dueForTuning, refineDraft, tuneVocabulary, type HintsSettings } from '~/lib/hints'
+import { detectedLanguages, type LanguageMode } from '~/lib/languages'
 import type { ModelMetadata } from '~/lib/model'
 import type { Segment, Transcript } from '~/lib/transcript'
 import { dropBlocked, knownFamilies, learn, loadVocabulary, otherScripts, saveVocabulary, type Vocabulary } from '~/lib/vocabulary'
@@ -86,6 +87,37 @@ export async function extraPasses(
 	}
 	if (swapped) await run.loadModel(run.mainModelPath)
 	return runs
+}
+
+/**
+ * The languages every pass of a file is kept to. Detecting runs the loaded main model over each speech
+ * window without decoding, so it costs no model swap; a model that can't detect, a failed detection, or
+ * one that heard nothing falls back to the list. Never throws.
+ */
+export async function spokenLanguages(
+	path: string,
+	mode: LanguageMode,
+	list: string[],
+	canDetect: boolean,
+	onWarning: (message: string) => void,
+): Promise<string[]> {
+	if (mode === 'list' || !canDetect) return list
+	try {
+		const among = mode === 'detect-list' ? list : []
+		const detection = await invoke<Transcript>('transcribe', {
+			options: {
+				path,
+				detect_language: true,
+				vad_model: `${await invoke<string>('get_models_folder')}/${config.vadModelFilename}`,
+				...(among.length ? { languages: among } : {}),
+			},
+		})
+		const detected = detectedLanguages(detection.segments)
+		if (detected.length > 0) return detected
+	} catch (error) {
+		onWarning(message(error))
+	}
+	return list
 }
 
 /** A missing or broken vocabulary only warns: a broken one is left alone for the user to fix. */

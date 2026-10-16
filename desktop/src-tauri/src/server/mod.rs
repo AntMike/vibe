@@ -142,6 +142,8 @@ pub enum ServerEvent {
         end: f64,
         text: String,
         speaker: Option<i32>,
+        /// ISO code, e.g. "uk"; absent when the server does not know it.
+        language: Option<String>,
     },
     Result {
         text: String,
@@ -249,6 +251,9 @@ impl ServerProcess {
         }
         if options.translate.unwrap_or(false) {
             form = form.text("translate", "true");
+        }
+        if options.detect_language.unwrap_or(false) {
+            form = form.text("detect_language", "true");
         }
         if let Some(ref prompt) = options.init_prompt {
             if !prompt.is_empty() {

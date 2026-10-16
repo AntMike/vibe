@@ -145,19 +145,25 @@ mod tests {
         // Where it hears " big", " Fig" and " f" are raised over it.
         let mut logits = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         boost.apply(&sequence(&[beg]), &vocab, &mut logits);
-        assert_eq!(logits, [0.0, 1.8, 0.0, 1.0, 0.0, 0.6, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            logits,
+            [0.0, WEIGHT * 3.0 / 5.0, 0.0, 1.0, 0.0, WEIGHT * 1.0 / 5.0, 0.0, 0.0, 0.0]
+        );
 
         // After " " then "fig" (the " big" before it is another word), the term
         // goes on, and a new one may still start.
         let mut logits = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         boost.apply(&sequence(&[3, 0, 4]), &vocab, &mut logits);
-        assert_eq!(logits[2], 1.2);
-        assert_eq!(logits[6], 1.2, "an ending may run past the term");
-        assert_eq!(logits[1], 1.8);
+        assert_eq!(logits[2], WEIGHT * 2.0 / 5.0);
+        assert_eq!(logits[6], WEIGHT * 2.0 / 5.0, "an ending may run past the term");
+        assert_eq!(logits[1], WEIGHT * 3.0 / 5.0);
 
         // A finished term is not continued.
         let mut logits = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         boost.apply(&sequence(&[1, 2]), &vocab, &mut logits);
-        assert_eq!(logits, [0.0, 1.8, 0.0, 1.0, 0.0, 0.6, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            logits,
+            [0.0, WEIGHT * 3.0 / 5.0, 0.0, 1.0, 0.0, WEIGHT * 1.0 / 5.0, 0.0, 0.0, 0.0]
+        );
     }
 }

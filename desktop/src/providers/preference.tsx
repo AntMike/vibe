@@ -3,6 +3,7 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import * as config from '~/lib/config'
 import { DEFAULT_AUTO_EXPORT, type AutoExportSettings } from '~/lib/auto-export'
 import { DEFAULT_HINTS, type HintsSettings } from '~/lib/hints'
+import type { LanguageMode } from '~/lib/languages'
 import { CONFIG_KEYS } from '~/lib/config-keys'
 import { KEEP_AWAKE, startKeepAwake, stopKeepAwake } from '~/lib/keep-awake'
 import { usePersisted } from '~/lib/config-store'
@@ -118,6 +119,9 @@ export interface Preference {
 	/** Language codes auto-detection may choose between; empty is any. */
 	spokenLanguages: string[]
 	setSpokenLanguages: ModifyState<string[]>
+	/** Whether a quick pass first finds the languages each recording contains, among `spokenLanguages` with `detect-list`. */
+	languageMode: LanguageMode
+	setLanguageMode: ModifyState<LanguageMode>
 
 	gpuDevice: number | null
 	setGpuDevice: ModifyState<number | null>
@@ -225,6 +229,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const hints = useMemo(() => ({ ...DEFAULT_HINTS, ...storedHints }), [storedHints])
 	const [extraPasses, setExtraPasses] = usePersisted<string[]>(CONFIG_KEYS.extraPasses, [])
 	const [spokenLanguages, setSpokenLanguages] = usePersisted<string[]>(CONFIG_KEYS.spokenLanguages, [])
+	const [languageMode, setLanguageMode] = usePersisted<LanguageMode>(CONFIG_KEYS.languageMode, 'list')
 	// The pre-3.2 `summarize.llm` object is read once when `ai` is missing, so nobody loses a key or a prompt.
 	const [ai, setAi] = usePersisted<AiSettings>(
 		CONFIG_KEYS.ai,
@@ -427,6 +432,8 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setExtraPasses,
 		spokenLanguages,
 		setSpokenLanguages,
+		languageMode,
+		setLanguageMode,
 		advancedTranscribeOptions,
 		setAdvancedTranscribeOptions,
 		recentLanguages,

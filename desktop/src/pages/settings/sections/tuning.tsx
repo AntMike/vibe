@@ -1,15 +1,24 @@
-import { ChevronRight, SlidersHorizontal } from 'lucide-react'
+import { ChevronRight, SlidersHorizontal, X } from 'lucide-react'
+import { useState } from 'react'
 import { DEFAULT_MODEL_OPTIONS } from '~/providers/preference'
 import { m } from '~/paraglide/messages.js'
 import { Button } from '~/components/ui/button'
 import { Switch } from '~/components/ui/switch'
-import { Input } from '~/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
+import { LanguageCombobox, matchesQuery } from '~/components/language-combobox'
+import { useLanguageOptions } from '~/components/language-input'
+import type { LanguageMode } from '~/lib/languages'
 import { getFriendlyModelName } from '~/lib/model'
 import { HintsGroup } from './hints'
 import { ActionRow, SettingsGroup, SettingsNote, SettingsRow, rowControlClass, type SettingsViewModel } from './shared'
 
 export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; onOpenWhisper: () => void }) {
 	const options = vm.preference.modelOptions
+	const spoken = vm.preference.spokenLanguages
+	const languages = useLanguageOptions()
+	const nameOf = (code: string) => languages.find((option) => option.code === code)?.label ?? code
+	const [query, setQuery] = useState('')
+	const addable = languages.filter((option) => !spoken.includes(option.code) && matchesQuery(option, query.trim().toLowerCase()))
 	const customized =
 		Boolean(options.translate) ||
 		(Object.keys(DEFAULT_MODEL_OPTIONS) as (keyof typeof DEFAULT_MODEL_OPTIONS)[])
@@ -28,21 +37,42 @@ export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; on
 				</SettingsRow>
 				{vm.preference.stableTimestampsEnabled && <SettingsNote>{m.stableTimestampsSlowNote()}</SettingsNote>}
 				<SettingsRow label={m.spokenLanguages()} description={m.spokenLanguagesInfo()}>
-					{/* Uncontrolled, so a trailing comma stays while typing; the parsed list is what's stored. */}
-					<Input
-						defaultValue={vm.preference.spokenLanguages.join(', ')}
-						onChange={(e) =>
-							vm.preference.setSpokenLanguages(
-								e.target.value
-									.split(',')
-									.map((code) => code.trim().toLowerCase())
-									.filter(Boolean),
-							)
-						}
-						placeholder="uk, en"
-						className={`w-56 ${rowControlClass}`}
-					/>
+					<Select value={vm.preference.languageMode} onValueChange={(value: LanguageMode) => vm.preference.setLanguageMode(value)}>
+						<SelectTrigger className={`w-64 ${rowControlClass}`}>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="list">{m.languageModeList()}</SelectItem>
+							<SelectItem value="detect">{m.languageModeDetect()}</SelectItem>
+							<SelectItem value="detect-list">{m.languageModeDetectList()}</SelectItem>
+						</SelectContent>
+					</Select>
 				</SettingsRow>
+				{vm.preference.languageMode !== 'detect' && (
+					<div className="flex flex-wrap items-center gap-2 px-4 py-3">
+						{spoken.map((code) => (
+							<Button
+								key={code}
+								type="button"
+								size="sm"
+								aria-label={m.removeLanguage({ language: nameOf(code) })}
+								onClick={() => vm.preference.setSpokenLanguages(spoken.filter((other) => other !== code))}>
+								{nameOf(code)}
+								<X />
+							</Button>
+						))}
+						<LanguageCombobox
+							value=""
+							onSelect={(code) => vm.preference.setSpokenLanguages([...spoken, code])}
+							groups={[{ label: null, items: addable }]}
+							query={query}
+							onQueryChange={setQuery}
+							triggerLabel={m.addLanguage()}
+							ariaLabel={m.addLanguage()}
+							className="w-56"
+						/>
+					</div>
+				)}
 			</SettingsGroup>
 			<HintsGroup vm={vm} />
 			<SettingsGroup title={m.extraPasses()}>

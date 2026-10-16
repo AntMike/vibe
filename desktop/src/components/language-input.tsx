@@ -20,15 +20,11 @@ function stripDecoration(label: string) {
 	return label.replace(/\s*[✨\u{1F300}-\u{1FAFF}]\s*$/u, '').trim()
 }
 
-export default function LanguageInput({ variant = 'default' }: LanguageInputProps) {
+/** The current model's languages, named in the display language and searchable by their English names. */
+export function useLanguageOptions(): LanguageOption[] {
 	const preference = usePreferenceProvider()
-	const [query, setQuery] = useState('')
-
 	const capabilities = preference.modelMetadata?.capabilities
-	const hasAutoDetect = capabilities?.language_detection ?? false
-	const selectedLang = preference.modelOptions.lang
-
-	const entries = useMemo<LanguageOption[]>(() => {
+	return useMemo<LanguageOption[]>(() => {
 		const displayNames = new Intl.DisplayNames([preference.displayLanguage], { type: 'language' })
 		const englishNames = new Intl.DisplayNames(['en'], { type: 'language' })
 		const of = (names: Intl.DisplayNames, code: string) => {
@@ -48,6 +44,16 @@ export default function LanguageInput({ variant = 'default' }: LanguageInputProp
 		list.sort((a, b) => a.label.localeCompare(b.label))
 		return list
 	}, [capabilities, preference.displayLanguage])
+}
+
+export default function LanguageInput({ variant = 'default' }: LanguageInputProps) {
+	const preference = usePreferenceProvider()
+	const [query, setQuery] = useState('')
+
+	const capabilities = preference.modelMetadata?.capabilities
+	const hasAutoDetect = capabilities?.language_detection ?? false
+	const selectedLang = preference.modelOptions.lang
+	const entries = useLanguageOptions()
 
 	function select(code: string) {
 		preference.setModelOptions({ ...preference.modelOptions, lang: code })

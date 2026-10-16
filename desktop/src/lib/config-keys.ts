@@ -44,6 +44,8 @@ export const CONFIG_KEYS = {
 	extraPasses: 'transcription.extraPasses',
 	/** Languages auto-detection may pick from, e.g. ["uk","en"]; empty = all. Sent as `languages`. */
 	spokenLanguages: 'transcription.spokenLanguages',
+	/** `list`, `detect` or `detect-list`: whether a quick pass first finds the recording's languages; see `lib/languages`. */
+	languageMode: 'transcription.languageMode',
 
 	// Recording
 	inputDeviceId: 'recording.inputDeviceId',

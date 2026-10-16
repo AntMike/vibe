@@ -132,6 +132,7 @@ impl HandoffHandler {
             draft_runs: None,
             hotwords: None,
             languages: None,
+            detect_language: None,
             temperature: None,
             // Passed straight through; whether it is meaningful is the phone's
             // call, made against the `translation` flag we reported.
@@ -169,6 +170,7 @@ impl HandoffHandler {
                     end,
                     text,
                     speaker,
+                    language,
                 }) => {
                     // Server reports seconds as f64; the wire format wants centiseconds.
                     let segment = crate::transcript::Segment {
@@ -176,6 +178,7 @@ impl HandoffHandler {
                         stop: (end * 100.0) as i64,
                         text,
                         speaker,
+                        language,
                     };
                     segments.push(segment.clone());
                     write_event(

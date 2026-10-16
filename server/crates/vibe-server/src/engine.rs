@@ -115,6 +115,7 @@ impl Engine {
                             end: segment.tokens.last().map_or(0, |token| (token.frame as i64 + 1) * 8),
                             text: segment.text,
                             no_speech_prob: 0.0,
+                            language: None,
                         })
                         .collect(),
                 })
@@ -349,6 +350,7 @@ impl Engine {
                                     end: ((start + segment.end_sample) / 160) as i64,
                                     text: segment.text.clone(),
                                     no_speech_prob: 0.0,
+                                    language: None,
                                 };
                                 if let Some(callback) = on_segment.as_mut() {
                                     callback(segment.clone());
@@ -429,6 +431,7 @@ fn nemotron_segment(transcription: &nemotron_rs::Transcription) -> Option<Segmen
         end: transcription.tokens.last().map_or(0, |token| (token.frame as i64 + 1) * 8),
         text: transcription.text.clone(),
         no_speech_prob: 0.0,
+        language: None,
     })
 }
 
@@ -477,5 +480,6 @@ fn parakeet_segment(transcription: &parakeet_rs::Transcription) -> Option<Segmen
             .map_or(0, |token| (token.frame + token.duration_frames.max(1)) as i64 * 8),
         text: transcription.text.clone(),
         no_speech_prob: 0.0,
+        language: None,
     })
 }

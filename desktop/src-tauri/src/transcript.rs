@@ -13,4 +13,6 @@ pub struct Segment {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }

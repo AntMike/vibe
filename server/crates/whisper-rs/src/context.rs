@@ -3,7 +3,6 @@
 //! mapping and callback semantics are kept from the previous implementation
 //! so vibe-server is unaffected.
 
-use std::collections::BTreeMap;
 use std::ffi::{c_char, c_void, CStr};
 use std::io::Write;
 use std::path::Path;
@@ -12,6 +11,7 @@ use std::sync::Once;
 
 use ggml_rs_sys as ffi;
 
+use crate::languages::{auto_language, window_languages, DETECT_PROGRESS};
 use crate::{
     model_file, ContextOptions, Error, FullCallbacks, FullParams, FullSegment, Result, SamplingStrategy, Segment,
     StreamCallbacks, TranscribeOptions, TranscribeResult, Whisper, Window, SAMPLE_RATE,
@@ -62,27 +62,50 @@ impl Context {
         if options.stable_timestamps {
             return transcribe_stable_timestamps(&mut self.whisper, samples, options, callbacks);
         }
+        // Whisper hears silence as speech: it invents a line for it ("Thanks
+        // for watching!") and then carries that line into the speech that
+        // follows, losing it. With a VAD at hand it only ever decodes speech.
+        if let Some(vad_model_path) = options.vad_model_path.as_deref() {
+            let mut vad = vad_rs::Vad::new(vad_model_path, vad_rs::Options::stable_timestamps())
+                .map_err(|error| Error::Message(error.to_string()))?;
+            let speech = vad.segments(samples).map_err(|error| Error::Message(error.to_string()))?;
+            options.windows = speech_windows(&options.windows, &speech, samples.len());
+            if options.windows.is_empty() {
+                if let Some(on_progress) = callbacks.on_progress.as_mut() {
+                    on_progress(100);
+                }
+                return Ok(TranscribeResult::default());
+            }
+            // detect_language with a VAD answers each speech window's language,
+            // the ones decoding would use, without decoding anything.
+            if options.detect_language {
+                let params = full_params(&options);
+                let windows = sliced(&options.windows);
+                let languages = window_languages(&mut self.whisper, samples, &windows, &params, &mut callbacks)?;
+                let mut result = TranscribeResult::default();
+                for (window, language) in windows.iter().zip(languages) {
+                    let segment = Segment {
+                        start: (window.start_sample / (SAMPLE_RATE / 100)) as i64,
+                        end: (window.end_sample / (SAMPLE_RATE / 100)) as i64,
+                        text: String::new(),
+                        no_speech_prob: 0.0,
+                        language,
+                    };
+                    if let Some(on_segment) = callbacks.on_segment.as_mut() {
+                        on_segment(segment.clone());
+                    }
+                    result.segments.push(segment);
+                }
+                if let Some(on_progress) = callbacks.on_progress.as_mut() {
+                    on_progress(100);
+                }
+                return Ok(result);
+            }
+        }
         // detect_language alone asks for the language and no segments, which
         // the single-pass path already answers.
-        if !options.detect_language {
-            // Whisper hears silence as speech: it invents a line for it ("Thanks
-            // for watching!") and then carries that line into the speech that
-            // follows, losing it. With a VAD at hand it only ever decodes speech.
-            if let Some(vad_model_path) = options.vad_model_path.as_deref() {
-                let mut vad = vad_rs::Vad::new(vad_model_path, vad_rs::Options::stable_timestamps())
-                    .map_err(|error| Error::Message(error.to_string()))?;
-                let speech = vad.segments(samples).map_err(|error| Error::Message(error.to_string()))?;
-                options.windows = speech_windows(&options.windows, &speech, samples.len());
-                if options.windows.is_empty() {
-                    if let Some(on_progress) = callbacks.on_progress.as_mut() {
-                        on_progress(100);
-                    }
-                    return Ok(TranscribeResult::default());
-                }
-            }
-            if !options.windows.is_empty() {
-                return transcribe_windows(&mut self.whisper, samples, options, callbacks);
-            }
+        if !options.detect_language && !options.windows.is_empty() {
+            return transcribe_windows(&mut self.whisper, samples, options, callbacks);
         }
 
         let params = full_params(&options);
@@ -137,6 +160,7 @@ fn convert(segment: &FullSegment) -> Segment {
         end: segment.t1,
         text: segment.text.clone(),
         no_speech_prob: segment.no_speech_prob,
+        language: None,
     }
 }
 
@@ -208,6 +232,24 @@ const MAX_WINDOW_SAMPLES: usize = 30 * SAMPLE_RATE;
 /// A pause longer than this ends a window, so a long silence is never decoded.
 const MAX_GAP_SAMPLES: usize = 2 * SAMPLE_RATE;
 
+/// Detection judges a window by its first 30 seconds, so a long one (someone
+/// talking on with no pause or turn) is cut into 30-second slices to hear
+/// every part of it.
+fn sliced(windows: &[Window]) -> Vec<Window> {
+    windows
+        .iter()
+        .flat_map(|window| {
+            (window.start_sample..window.end_sample)
+                .step_by(MAX_WINDOW_SAMPLES)
+                .map(move |start| Window {
+                    start_sample: start,
+                    end_sample: (start + MAX_WINDOW_SAMPLES).min(window.end_sample),
+                    group: window.group,
+                })
+        })
+        .collect()
+}
+
 /// The speech in each window (the whole recording when there are none), as
 /// windows of at most 30 seconds with no long pause inside, in order.
 fn speech_windows(windows: &[Window], speech: &[vad_rs::SpeechSegment], len: usize) -> Vec<Window> {
@@ -246,9 +288,6 @@ fn speech_windows(windows: &[Window], speech: &[vad_rs::SpeechSegment], len: usi
     out
 }
 
-/// Share of the progress bar spent detecting window languages before decoding.
-const DETECT_PROGRESS: usize = 20;
-
 /// The windowed path: transcribe each window (a speaker turn) on its own and
 /// shift its timestamps back. With an auto language, each window gets its own
 /// detected language, so a recording that switches languages mid-way is not
@@ -270,59 +309,16 @@ fn transcribe_windows(
         .filter(|window| window.end_sample > window.start_sample)
         .collect();
     let mut params = full_params(&options);
-    let auto = params
-        .language
-        .as_deref()
-        .is_none_or(|lang| lang.is_empty() || lang == "auto");
     let n_windows = windows.len().max(1);
+    let languages = window_languages(whisper, samples, &windows, &params, &mut callbacks)?;
 
-    let languages: Vec<Option<String>> = if !auto {
-        vec![params.language.clone(); windows.len()]
-    } else if !whisper.is_multilingual() {
-        vec![Some("en".to_string()); windows.len()]
-    } else {
-        let mut detections = Vec::with_capacity(windows.len());
-        for (index, window) in windows.iter().enumerate() {
-            if callbacks.should_abort.as_mut().is_some_and(|should_abort| should_abort()) {
-                return Err(Error::Aborted);
-            }
-            let (lang, prob) = whisper.detect_language(
-                &samples[window.start_sample..window.end_sample],
-                params.n_threads,
-                &params.languages,
-            )?;
-            let secs = (window.end_sample - window.start_sample) as f32 / SAMPLE_RATE as f32;
-            tracing::debug!(
-                start = window.start_sample as f32 / SAMPLE_RATE as f32,
-                secs,
-                group = window.group,
-                lang = Whisper::lang_str(lang),
-                prob,
-                "window language"
-            );
-            detections.push(Detection {
-                group: window.group,
-                secs,
-                lang,
-                prob,
-            });
-            if let Some(on_progress) = callbacks.on_progress.as_mut() {
-                on_progress(((index + 1) * DETECT_PROGRESS / n_windows) as i32);
-            }
-        }
-        resolve_languages(&detections)
-            .into_iter()
-            .map(|lang| Whisper::lang_str(lang).map(str::to_string))
-            .collect()
-    };
-
-    let progress_start = if auto { DETECT_PROGRESS } else { 0 };
+    let progress_start = if auto_language(&params) { DETECT_PROGRESS } else { 0 };
     let mut result = TranscribeResult::default();
     for (index, (window, language)) in windows.iter().zip(languages).enumerate() {
         if callbacks.should_abort.as_mut().is_some_and(|should_abort| should_abort()) {
             return Err(Error::Aborted);
         }
-        params.language = language;
+        params.language = language.clone();
         let decoded = {
             let mut engine_callbacks = FullCallbacks::default();
             if let Some(should_abort) = callbacks.should_abort.as_mut() {
@@ -340,6 +336,7 @@ fn transcribe_windows(
             let mut segment = convert(segment);
             segment.start += t0cs;
             segment.end += t0cs;
+            segment.language = language.clone();
             if let Some(on_segment) = callbacks.on_segment.as_mut() {
                 on_segment(segment.clone());
             }
@@ -352,70 +349,6 @@ fn transcribe_windows(
     }
     Ok(result)
 }
-
-/// A window shorter than this is too little audio to trust its own language guess.
-const MIN_CONFIDENT_SECS: f32 = 1.5;
-/// Below this probability a window's own language guess is not trusted either.
-const MIN_CONFIDENT_PROB: f32 = 0.5;
-
-struct Detection {
-    group: usize,
-    secs: f32,
-    lang: i32,
-    prob: f32,
-}
-
-/// Each window's language: its own guess when that is confident, otherwise the
-/// language its group (speaker) speaks longest, then the recording's, then its
-/// own guess after all. Short replies ("yeah", "ok") are where detection fails.
-fn resolve_languages(detections: &[Detection]) -> Vec<i32> {
-    let confident = |detection: &Detection| detection.secs >= MIN_CONFIDENT_SECS && detection.prob >= MIN_CONFIDENT_PROB;
-    let mut by_group: BTreeMap<usize, BTreeMap<i32, f32>> = BTreeMap::new();
-    let mut overall: BTreeMap<i32, f32> = BTreeMap::new();
-    for detection in detections.iter().filter(|detection| confident(detection)) {
-        *by_group
-            .entry(detection.group)
-            .or_default()
-            .entry(detection.lang)
-            .or_default() += detection.secs;
-        *overall.entry(detection.lang).or_default() += detection.secs;
-    }
-    let longest = |totals: &BTreeMap<i32, f32>| totals.iter().max_by(|a, b| a.1.total_cmp(b.1)).map(|(lang, _)| *lang);
-    let family_pick = |lang: i32| {
-        let family = CONFUSED_FAMILIES
-            .iter()
-            .find(|family| Whisper::lang_str(lang).is_some_and(|name| family.contains(&name)))?;
-        let in_family: BTreeMap<i32, f32> = overall
-            .iter()
-            .filter(|(lang, _)| Whisper::lang_str(**lang).is_some_and(|name| family.contains(&name)))
-            .map(|(lang, secs)| (*lang, *secs))
-            .collect();
-        longest(&in_family)
-    };
-    detections
-        .iter()
-        .map(|detection| {
-            let lang = if confident(detection) {
-                detection.lang
-            } else {
-                by_group
-                    .get(&detection.group)
-                    .and_then(longest)
-                    .or_else(|| longest(&overall))
-                    .unwrap_or(detection.lang)
-            };
-            family_pick(lang).unwrap_or(lang)
-        })
-        .collect()
-}
-
-/// Languages Whisper cannot tell apart turn by turn: it labels Ukrainian turns
-/// Russian at 0.99 confidence, so neither length nor probability separates a
-/// real switch from a misdetection. A recording settles on whichever member of
-/// the family it speaks most and decodes every such turn in it.
-/// ponytail: one family per recording, so a lone Russian speaker in a Ukrainian
-/// call is decoded as Ukrainian; split per speaker if that ever matters.
-const CONFUSED_FAMILIES: &[&[&str]] = &[&["uk", "ru", "be"]];
 
 /// Maps the historical `TranscribeOptions` onto the engine's `FullParams`,
 /// mirroring the previous `full_params` over `whisper_full_default_params`.
@@ -604,41 +537,6 @@ mod tests {
             vec![window(28, 33, 1), window(33, 35, 2), window(40, 60, 2), window(60, 100, 2)]
         );
         assert!(speech_windows(&[], &[], secs(10)).is_empty());
-    }
-
-    #[test]
-    fn unsure_windows_fall_back_to_their_speaker_then_the_recording() {
-        let (en, uk, de) = (0, 1, 2);
-        let detection = |group, secs, lang, prob| Detection { group, secs, lang, prob };
-        let langs = resolve_languages(&[
-            detection(0, 10.0, en, 0.9),
-            detection(1, 8.0, uk, 0.95),
-            detection(0, 6.0, uk, 0.9), // speaker 0 switches language: trusted
-            detection(1, 0.8, de, 0.9), // too short: speaker 1's language
-            detection(0, 4.0, de, 0.3), // unsure: speaker 0's longest language
-            detection(2, 0.5, de, 0.9), // unknown speaker: the recording's longest (uk, 14s)
-        ]);
-        assert_eq!(langs, vec![en, uk, uk, uk, en, uk]);
-        assert_eq!(resolve_languages(&[detection(0, 0.5, de, 0.2)]), vec![de]);
-    }
-
-    #[test]
-    fn confusable_languages_follow_the_recording() {
-        let id = |name| crate::lang::lang_id(name).unwrap() as i32;
-        let (en, uk, ru) = (id("en"), id("uk"), id("ru"));
-        let detection = |group, secs, lang, prob| Detection { group, secs, lang, prob };
-        let langs = resolve_languages(&[
-            detection(0, 70.0, uk, 0.9),
-            detection(1, 5.9, ru, 0.99), // confident, but uk/ru is not trusted per turn
-            detection(1, 20.0, en, 0.9), // English is told apart reliably: kept
-            detection(2, 18.0, ru, 0.95),
-        ]);
-        assert_eq!(langs, vec![uk, uk, en, uk]);
-        // A Russian recording stays Russian.
-        assert_eq!(
-            resolve_languages(&[detection(0, 30.0, ru, 0.9), detection(0, 3.0, uk, 0.8)]),
-            vec![ru, ru]
-        );
     }
 
     #[test]

@@ -41,6 +41,8 @@ pub struct TranscribeOptions {
     pub hotwords: Option<Vec<String>>,
     /// Language codes auto-detection may choose between, e.g. `["uk", "en"]`; empty or missing is any.
     pub languages: Option<Vec<String>>,
+    /// Only find the language of each speech window, without transcribing; needs `vad_model`.
+    pub detect_language: Option<bool>,
 }
 
 pub(crate) const SERVER_DIED: &str = "vibe-server process died during transcription";
@@ -138,12 +140,14 @@ pub async fn transcribe(
                     end,
                     text,
                     speaker,
+                    language,
                 } => {
                     let segment = Segment {
                         start: (start * 100.0) as i64,
                         stop: (end * 100.0) as i64,
                         text,
                         speaker,
+                        language,
                     };
                     app_handle.emit_to("main", "new_segment", segment.clone()).log_error();
                     segments.push(segment);

@@ -20,7 +20,7 @@ import { carrySpeakerNames, speakersFromCall, type CallSpeakerTurn } from '~/lib
 import { mergeRuns } from '~/lib/vote'
 import { correctTerms } from '~/lib/hints'
 import { applyReplacements, fixSpelling } from '~/lib/spelling'
-import { callNames, extraPasses, hintOptions, type Hints } from './transcribe-hints'
+import { callNames, extraPasses, hintOptions, spokenLanguages, type Hints } from './transcribe-hints'
 import { vocabularyPath } from '~/lib/vocabulary'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
@@ -446,6 +446,18 @@ export function useTranscribeQueue(): TranscribeQueue {
 				const startedAt = performance.now()
 				try {
 					const options = preferenceRef.current
+					// The detection's windows have no text: kept out of the job like the draft's lines.
+					draftingRef.current = true
+					const languages = await spokenLanguages(
+						next.path,
+						options.languageMode,
+						options.spokenLanguages,
+						// A fixed language needs no allow-list: detecting is only for auto.
+						(options.modelMetadata?.capabilities.language_detection ?? false) && (!options.modelOptions.lang || options.modelOptions.lang === 'auto'),
+						(message) => toast.warning(m.languageDetectionFailed({ message }), { position: 'bottom-center', duration: 8000 }),
+					)
+					draftingRef.current = false
+					if (abortCurrentRef.current || abortAllRef.current) throw new Error('cancelled')
 					let hints: Hints | null = null
 					if (options.hints.enabled && options.modelMetadata?.capabilities.text_prompts !== false) {
 						draftingRef.current = true
@@ -457,7 +469,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 								mainModelPath: current.modelPath,
 								vocabularyPath: options.hints.learn ? await vocabularyPath(current.projectsPath) : undefined,
 								lang: options.modelOptions.lang,
-								languages: options.spokenLanguages,
+								languages,
 								loadModel: async (modelPath) => {
 									await invoke('load_model', {
 										modelPath,
@@ -479,7 +491,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 						options: {
 							path: next.path,
 							...withoutUnsupportedOptions(options.modelOptions, options.modelMetadata?.capabilities),
-							...(options.spokenLanguages.length ? { languages: options.spokenLanguages } : {}),
+							...(languages.length ? { languages } : {}),
 							...shared,
 							...hints?.prompt,
 						},
@@ -507,7 +519,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 									isAborted: () => abortCurrentRef.current || abortAllRef.current,
 									onWarning: (message) => toast.warning(m.extraPassFailed({ message }), { position: 'bottom-center', duration: 8000 }),
 									lang: options.modelOptions.lang,
-									languages: options.spokenLanguages,
+									languages,
 								},
 							)
 						} finally {

@@ -30,6 +30,8 @@ mod full;
 #[cfg(feature = "ffi")]
 mod kv;
 #[cfg(feature = "ffi")]
+mod languages;
+#[cfg(feature = "ffi")]
 mod mel;
 #[cfg(feature = "ffi")]
 mod model;
@@ -80,6 +82,8 @@ pub struct Segment {
     pub end: i64,
     pub text: String,
     pub no_speech_prob: f32,
+    /// The language this segment was decoded in (ISO code), when known.
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

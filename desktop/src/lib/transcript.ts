@@ -14,6 +14,8 @@ export interface Segment {
 	stop: number
 	text: string
 	speaker?: number
+	/** ISO code of the language heard, e.g. "uk", when the server knows it. */
+	language?: string
 }
 
 /** Display names chosen for diarized speakers, keyed by the segment's zero-based speaker index. */

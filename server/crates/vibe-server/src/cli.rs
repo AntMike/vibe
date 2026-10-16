@@ -227,7 +227,17 @@ async fn transcribe_command(args: TranscribeArgs, config: AppConfig) -> anyhow::
         )
         .inspect_err(|err| tracing::error!("transcription failed: {err:#}"))?;
 
-    if args.word_timestamps {
+    if args.detect_language {
+        // One segment per speech window, with its language and no text.
+        for segment in &result.segments {
+            println!(
+                "[{} --> {}] {}",
+                format::cs_to_vtt_time(segment.start),
+                format::cs_to_vtt_time(segment.end),
+                segment.language.as_deref().unwrap_or("?")
+            );
+        }
+    } else if args.word_timestamps {
         // whisper.cpp emits one segment per word here, plus a leading empty one for
         // the silence before speech starts.
         let words = result.segments.iter().filter(|segment| !segment.text.trim().is_empty());

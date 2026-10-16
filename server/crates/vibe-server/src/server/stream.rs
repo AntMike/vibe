@@ -70,6 +70,9 @@ pub(super) fn stream_transcription(
                     if let Some(speaker) = format::match_speaker(start, end, &segment_diar_segments) {
                         event["speaker"] = serde_json::json!(speaker);
                     }
+                    if let Some(language) = segment.language {
+                        event["language"] = serde_json::json!(language);
+                    }
                     if send_event(&segment_tx, event).is_err() {
                         abort_for_segment.store(true, Ordering::SeqCst);
                     }

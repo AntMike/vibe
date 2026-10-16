@@ -376,6 +376,7 @@ mod tests {
                 stop: 350,
                 text: "hello there".to_string(),
                 speaker: None,
+                language: None,
             }],
             language: Some("he".to_string()),
             model_path: Some("/models/ggml-medium.bin".to_string()),
