@@ -15,6 +15,12 @@ export type SlackMethod = 'off' | 'token' | 'connector'
 /** The summary as a reply in the thread, or as a `.md` file next to the transcript. */
 export type SummaryAs = 'message' | 'file'
 
+/** A recorded huddle: when the recording started (unix seconds) and the channel Slack showed. */
+export interface SlackCall {
+	startedAt: number
+	channel?: string
+}
+
 export interface SlackFile {
 	name: string
 	bytes: Uint8Array

@@ -7,6 +7,7 @@ import { Switch } from '~/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { CONFIG_KEYS } from '~/lib/config-keys'
 import type { SlackMethod, SummaryAs } from '~/lib/slack'
+import type { TranscriptExportContent } from '~/lib/transcript-export'
 import { usePersisted } from '~/lib/config-store'
 import { m } from '~/paraglide/messages.js'
 import { usePreferenceProvider } from '~/providers/preference'
@@ -26,6 +27,7 @@ export function NotificationsSection() {
 	const [slackMethod, setSlackMethod] = usePersisted<SlackMethod>(CONFIG_KEYS.slackMethod, 'off')
 	const [slackToken, setSlackToken] = usePersisted(CONFIG_KEYS.slackToken, '')
 	const [slackSummaryAs, setSlackSummaryAs] = usePersisted<SummaryAs>(CONFIG_KEYS.slackSummaryAs, 'message')
+	const [slackContent, setSlackContent] = usePersisted<TranscriptExportContent>(CONFIG_KEYS.slackContent, 'both')
 	const [slackWithoutAsking, setSlackWithoutAsking] = usePersisted(CONFIG_KEYS.slackSendWithoutAsking, false)
 	const system = isWindows && style === 'system'
 
@@ -120,6 +122,18 @@ export function NotificationsSection() {
 					)}
 					{slackMethod !== 'off' && (
 						<>
+							<SettingsRow label={m.slackContent()} description={m.slackContentInfo()}>
+								<Select value={slackContent} onValueChange={(value: TranscriptExportContent) => setSlackContent(value)}>
+									<SelectTrigger className={`w-64 ${rowControlClass}`}>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="both">{m.slackSendBoth()}</SelectItem>
+										<SelectItem value="summary">{m.slackSendSummary()}</SelectItem>
+										<SelectItem value="transcript">{m.slackSendTranscript()}</SelectItem>
+									</SelectContent>
+								</Select>
+							</SettingsRow>
 							<SettingsRow label={m.slackSummaryAs()}>
 								<Select value={slackSummaryAs} onValueChange={(value: SummaryAs) => setSlackSummaryAs(value)}>
 									<SelectTrigger className={`w-64 ${rowControlClass}`}>

@@ -22,7 +22,7 @@ import { useAudioDownload } from '~/pages/home/hooks/use-audio-download'
 import { useRecording } from '~/pages/home/hooks/use-recording'
 import { useDropTarget } from './hooks/use-drop-target'
 import { useSummaries, type Summaries } from './hooks/use-summaries'
-import { useSlackHuddle } from './hooks/use-slack-huddle'
+import { useSlackHuddle, type SlackHuddle } from './hooks/use-slack-huddle'
 import { useTranscribeQueue, type TranscribeQueue } from './hooks/use-transcribe-queue'
 
 export type SessionMode = 'idle' | 'working' | 'done'
@@ -36,6 +36,8 @@ export interface Session {
 	queue: TranscribeQueue
 	/** AI summaries of finished transcripts (settings → Summarize). */
 	summaries: Summaries
+	/** Sending a recorded Slack huddle to its thread. */
+	slack: SlackHuddle
 	preference: Preference
 	dragging: boolean
 	panel: IdlePanel
@@ -188,6 +190,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
 			const { preference: current, hydrate, transcribeJob, trackSlackHuddle } = recordingCompletionRef.current
 			const name = autoProjectName(payload.name, 'record')
+			const slackCall =
+				payload.callApp === 'slack' && payload.startedAt ? { startedAt: payload.startedAt, ...(payload.callChannel ? { channel: payload.callChannel } : {}) } : undefined
 			const createdAt = new Date()
 			const saved = await saveTranscript({
 				name,
@@ -199,6 +203,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				modelPath: current.modelPath,
 				createdAt,
 				callSpeakers: payload.speakers,
+				slackCall,
 			})
 			if (!saved) {
 				const message = `Failed to save recording project; the recording remains at ${payload.path}`
@@ -216,10 +221,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				modelPath: current.modelPath,
 				segments: [],
 				callSpeakers: payload.speakers?.length ? payload.speakers : undefined,
+				slackCall,
 			}
 			const jobId = hydrate(record, saved.recordPath, saved.mediaPath, 'record')
 			notifyTranscriptsChanged()
-			if (jobId && payload.callApp === 'slack' && payload.startedAt) trackSlackHuddle(jobId, payload.startedAt, payload.callChannel)
+			if (jobId && slackCall) trackSlackHuddle(jobId)
 			if (current.autoTranscribeAfterRecording && jobId) transcribeJob(jobId)
 		})
 		return () => {
@@ -342,6 +348,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			mode,
 			queue,
 			summaries,
+			slack: slackHuddle,
 			preference,
 			dragging,
 			panel,
@@ -353,7 +360,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			browse,
 			startNew,
 		}),
-		[mode, queue, summaries, preference, dragging, panel, recording, recordElapsed, link, collectingFolder, browse, startNew],
+		[mode, queue, summaries, slackHuddle, preference, dragging, panel, recording, recordElapsed, link, collectingFolder, browse, startNew],
 	)
 
 	return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

@@ -37,8 +37,10 @@ pub struct TranscribeOptions {
     pub vad_model: Option<String>,
     /// Parakeet only: decode this many times over altered audio and keep the surest words.
     pub draft_runs: Option<i32>,
-    /// Parakeet only: known terms the decoder leans toward spelling out.
+    /// Known terms the decoder leans toward spelling out (Parakeet and Whisper).
     pub hotwords: Option<Vec<String>>,
+    /// Language codes auto-detection may choose between, e.g. `["uk", "en"]`; empty or missing is any.
+    pub languages: Option<Vec<String>>,
 }
 
 pub(crate) const SERVER_DIED: &str = "vibe-server process died during transcription";

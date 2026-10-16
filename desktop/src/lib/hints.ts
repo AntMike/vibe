@@ -1,4 +1,5 @@
 import { chunkLines, createClient, fillPrompt, type AiConnection } from './ai'
+import { MAX_REPLACEMENTS, type Replacement } from './spelling'
 import { parseTuning, tune, type Vocabulary } from './vocabulary'
 
 /**
@@ -24,6 +25,8 @@ export interface HintsSettings {
 	learn: boolean
 	/** Recordings between the AI's tidy-ups of the learned vocabulary; 0 never tidies it. */
 	tuneEvery: number
+	/** After transcribing, let the AI respell misheard names and terms; see `CORRECT_PROMPT`. */
+	correct: boolean
 }
 
 export const DEFAULT_HINTS: HintsSettings = {
@@ -34,6 +37,7 @@ export const DEFAULT_HINTS: HintsSettings = {
 	draftRuns: 1,
 	learn: false,
 	tuneEvery: 0,
+	correct: false,
 }
 
 /**
@@ -68,6 +72,20 @@ Always right as spelled: {pinned}
 
 """
 {terms}
+"""`
+
+export const CORRECT_PROMPT = `Output only the requested content. No introductions, explanations, or commentary.
+
+Below is an automatic transcript of a recording; it has recognition mistakes. Find the names of people, companies, products and places, and the specialized and borrowed terms, that are misheard or misspelled in it. Known participants: {speakers}. Terms known from earlier recordings, a term written several ways as A / B: {known}.
+
+Answer with JSON only: [{"from": "...", "to": "..."}, ...]
+- from: the word exactly as the transcript writes it; to: its correct spelling.
+- Keep the speaker's script and the word's inflected ending: стімейти → естімейти; плікап → ClickUp or Клікап, whichever way the known term is spelled. Never translate.
+- Only words you are sure of; leave everything else untouched. A wrong fix does more harm than a missed one.
+- At most ${MAX_REPLACEMENTS} pairs; [] when nothing needs fixing.
+
+"""
+{transcript}
 """`
 
 const WORD = /[\p{L}\p{N}][\p{L}\p{N}'’.+-]*[\p{L}\p{N}+]|[\p{L}\p{N}]/gu
@@ -117,6 +135,21 @@ export function parseGlossary(reply: string): string[] {
 		.slice(0, MAX_TERMS)
 }
 
+/** The fixes out of an AI reply, fenced or not; anything but a pair of words is dropped. */
+export function parseReplacements(reply: string): Replacement[] {
+	let value: unknown
+	try {
+		value = JSON.parse(reply.replace(/```\w*/g, '').trim())
+	} catch {
+		throw new Error(`The AI did not answer with term fixes: ${reply.slice(0, 200)}`)
+	}
+	if (!Array.isArray(value)) return []
+	return value
+		.filter((pair): pair is Replacement => typeof pair?.from === 'string' && typeof pair?.to === 'string')
+		.map(({ from, to }) => ({ from: from.trim(), to: to.trim() }))
+		.filter(({ from, to }) => from && to)
+}
+
 /**
  * The Whisper prompt: the user's own prompt, then the terms as a plain list. No "Glossary:" label —
  * an English word there would nudge a Ukrainian call toward English. Names go first: when the list
@@ -134,7 +167,9 @@ export function buildPrompt(terms: string[], userPrompt?: string): string {
 		kept.push(term)
 		length += term.length + 2
 	}
-	const glossary = kept.length > 0 ? `${kept.join(', ')}.` : ''
+	// No period after the list: ended like a sentence, it made Whisper open a window with a lone
+	// "Дякую." and skip the whole 30 s (scripts/asr-eval, Oct 15 pieces: 48% WER against 32%).
+	const glossary = kept.join(', ')
 	return [userPrompt?.trim(), glossary].filter(Boolean).join(' ')
 }
 
@@ -178,4 +213,23 @@ export async function refineDraft(
 	const prompt = fillPrompt(template, { transcript, speakers: names.join(', ') || 'unknown' })
 	// Unloaded right after when local: Whisper needs the GPU memory next.
 	return parseGlossary(await createClient(connection, { unloadAfter: true }).ask(prompt))
+}
+
+/** Misheard names and terms in a finished transcript, with their right spelling; see `CORRECT_PROMPT`. */
+export async function correctTerms(
+	lines: string[],
+	names: string[],
+	families: string[],
+	settings: HintsSettings,
+	connection: AiConnection,
+): Promise<Replacement[]> {
+	connection = hintsConnection(settings, connection)
+	const contextTokens = connection.platform === 'cli' ? CLI_CONTEXT_TOKENS : connection.contextTokens
+	const template = CORRECT_PROMPT.replace('{known}', () => families.join(', ') || 'none')
+	// ponytail: Ollama loads beside the main model here; on a GPU too small for both it spills to the CPU.
+	const client = createClient(connection, { unloadAfter: true })
+	const pairs: Replacement[] = []
+	for (const transcript of chunkLines(lines, template, contextTokens))
+		pairs.push(...parseReplacements(await client.ask(fillPrompt(template, { transcript, speakers: names.join(', ') || 'unknown' }))))
+	return pairs
 }

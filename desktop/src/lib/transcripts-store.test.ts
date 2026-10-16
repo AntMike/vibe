@@ -96,9 +96,11 @@ describe('project media ownership', () => {
 			moveSourceMedia: true,
 			createdAt,
 			segments: [],
+			slackCall: { startedAt: 1760000000, channel: 'general' },
 		})
 
 		const record = await readTranscript(saved!.recordPath)
+		expect(record?.slackCall).toEqual({ startedAt: 1760000000, channel: 'general' })
 		expect(record?.segments).toEqual([])
 		expect(record?.sourcePath).toBe(saved?.mediaPath)
 		expect(disk.files.has(saved!.mediaPath)).toBe(true)

@@ -1,6 +1,7 @@
 import * as pathApi from '@tauri-apps/api/path'
 import * as fs from '@tauri-apps/plugin-fs'
 import { parseCallSpeakers, type CallSpeakerTurn } from './call-speakers'
+import type { SlackCall } from './slack'
 import type { Segment, SpeakerNames } from './transcript'
 
 /**
@@ -45,6 +46,15 @@ export interface TranscriptRecord {
 	thread?: AiThreadEntry[]
 	/** Who a call app showed talking during the recording; names the diarized speakers. */
 	callSpeakers?: CallSpeakerTurn[]
+	/** The Slack huddle this was recorded from, so it can be sent to its thread later. */
+	slackCall?: SlackCall
+}
+
+function parseSlackCall(value: unknown): SlackCall | undefined {
+	if (typeof value !== 'object' || value === null) return undefined
+	const { startedAt, channel } = value as Record<string, unknown>
+	if (typeof startedAt !== 'number') return undefined
+	return { startedAt, ...(typeof channel === 'string' && channel ? { channel } : {}) }
 }
 
 export interface AiThreadEntry {
@@ -85,6 +95,7 @@ export interface SaveTranscriptInput {
 	createdAt?: Date
 	speakerNames?: SpeakerNames
 	callSpeakers?: CallSpeakerTurn[]
+	slackCall?: SlackCall
 }
 
 export interface SaveTranscriptResult {
@@ -288,6 +299,7 @@ export async function saveTranscript(input: SaveTranscriptInput): Promise<SaveTr
 			segments: input.segments,
 			...(input.speakerNames && Object.keys(input.speakerNames).length ? { speakerNames: input.speakerNames } : {}),
 			...(input.callSpeakers?.length ? { callSpeakers: input.callSpeakers } : {}),
+			...(input.slackCall ? { slackCall: input.slackCall } : {}),
 		}
 
 		let media: { audioFile: string; path: string } | undefined
@@ -376,6 +388,7 @@ export async function readTranscript(path: string): Promise<TranscriptRecord | n
 			summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
 			thread: parseThread(parsed.thread),
 			callSpeakers: parseCallSpeakers(parsed.callSpeakers),
+			slackCall: parseSlackCall(parsed.slackCall),
 		}
 	} catch (error) {
 		console.warn('failed to read transcript:', path, error)

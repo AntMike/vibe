@@ -19,10 +19,14 @@ export interface HintsRun {
 	loadModel: (path: string) => Promise<void>
 	isAborted: () => boolean
 	onWarning: (message: string) => void
+	/** The main pass's language, so a draft or extra pass doesn't fall back to English. */
+	lang?: string
+	/** Language codes auto-detection may choose between; empty is any. */
+	languages?: string[]
 }
 
 /** Participants, most talkative first. */
-function callNames(turns: CallSpeakerTurn[] | undefined): string[] {
+export function callNames(turns: CallSpeakerTurn[] | undefined): string[] {
 	const seconds = new Map<string, number>()
 	for (const turn of turns ?? []) seconds.set(turn.name, (seconds.get(turn.name) ?? 0) + turn.end - turn.start)
 	return [...seconds].sort((a, b) => b[1] - a[1]).map(([name]) => name)
@@ -37,7 +41,14 @@ async function draftSegments(path: string, draftModel: string, swap: boolean, ru
 	const metadata = await invoke<ModelMetadata>('get_model_metadata', { modelPath: draftModel })
 	const vad = metadata.capabilities.requires_vad ? { vad_model: `${await invoke<string>('get_models_folder')}/${config.vadModelFilename}` } : {}
 	const draft = await invoke<Transcript>('transcribe', {
-		options: { path, ...vad, ...(runs > 1 ? { draft_runs: runs } : {}), ...(hotwords.length > 0 ? { hotwords } : {}) },
+		options: {
+			path,
+			...vad,
+			...(run.lang ? { lang: run.lang } : {}),
+			...(run.languages?.length ? { languages: run.languages } : {}),
+			...(runs > 1 ? { draft_runs: runs } : {}),
+			...(hotwords.length > 0 ? { hotwords } : {}),
+		},
 	})
 	return draft.segments.filter((segment) => segment.text.trim())
 }
@@ -47,6 +58,8 @@ export interface Hints {
 	prompt: { init_prompt: string; carry_prompt: true } | null
 	/** What the draft pass heard, to merge with the main pass; see `mergeRuns`. */
 	draft: Segment[]
+	/** The known terms as families, main spelling first; see `knownFamilies`. */
+	families: string[][]
 }
 
 /**
@@ -58,7 +71,7 @@ export async function extraPasses(
 	path: string,
 	models: string[],
 	draft: { model: string | null; segments: Segment[] },
-	run: Pick<HintsRun, 'mainModelPath' | 'loadModel' | 'isAborted' | 'onWarning'>,
+	run: Pick<HintsRun, 'mainModelPath' | 'loadModel' | 'isAborted' | 'onWarning' | 'lang' | 'languages'>,
 ): Promise<Segment[][]> {
 	const runs: Segment[][] = draft.segments.length > 0 ? [draft.segments] : []
 	let swapped = false
@@ -155,5 +168,5 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 	const scripts = vocabulary ? otherScripts(vocabulary, [...pinned, ...terms]) : []
 	const prompt = buildPrompt([...names, ...pinned, ...terms, ...scripts], run.userPrompt)
 	const hinted = Boolean(prompt) && prompt !== run.userPrompt?.trim()
-	return { prompt: hinted ? { init_prompt: prompt, carry_prompt: true } : null, draft }
+	return { prompt: hinted ? { init_prompt: prompt, carry_prompt: true } : null, draft, families }
 }

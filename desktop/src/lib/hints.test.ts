@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { cliCommand, DEFAULT_AI } from './ai'
-import { buildPrompt, DEFAULT_HINTS, parseGlossary, rareWords, refineDraft } from './hints'
+import { buildPrompt, DEFAULT_HINTS, parseGlossary, parseReplacements, rareWords, refineDraft } from './hints'
 
 const LEAN = '--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence'
 
@@ -23,6 +23,15 @@ describe('rareWords', () => {
 	})
 })
 
+describe('parseReplacements', () => {
+	it('reads fenced JSON and drops anything but a pair of words', () => {
+		const reply = '```json\n[{"from": " стімейти ", "to": "естімейти"}, {"from": "x"}, {"from": "a", "to": ""}, 3]\n```'
+		expect(parseReplacements(reply)).toEqual([{ from: 'стімейти', to: 'естімейти' }])
+		expect(parseReplacements('{}')).toEqual([])
+		expect(() => parseReplacements('nothing to fix')).toThrow()
+	})
+})
+
 describe('parseGlossary', () => {
 	it('reads a line, a list, or a fenced reply', () => {
 		expect(parseGlossary('Oleksii, Kubernetes, Vibe.')).toEqual(['Oleksii', 'Kubernetes', 'Vibe'])
@@ -33,7 +42,7 @@ describe('parseGlossary', () => {
 
 describe('buildPrompt', () => {
 	it('puts the glossary after the user prompt, deduplicated', () => {
-		expect(buildPrompt(['Oleksii', 'oleksii', ' Vibe '], 'A call about releases.')).toBe('A call about releases. Oleksii, Vibe.')
+		expect(buildPrompt(['Oleksii', 'oleksii', ' Vibe '], 'A call about releases.')).toBe('A call about releases. Oleksii, Vibe')
 	})
 
 	it('drops the last terms once the prompt is full', () => {

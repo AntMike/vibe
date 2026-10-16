@@ -42,6 +42,8 @@ export const CONFIG_KEYS = {
 	hints: 'transcription.recognitionHints',
 	/** Models each file is transcribed again with, to merge the runs; see `lib/vote`. */
 	extraPasses: 'transcription.extraPasses',
+	/** Languages auto-detection may pick from, e.g. ["uk","en"]; empty = all. Sent as `languages`. */
+	spokenLanguages: 'transcription.spokenLanguages',
 
 	// Recording
 	inputDeviceId: 'recording.inputDeviceId',
@@ -71,6 +73,8 @@ export const CONFIG_KEYS = {
 	slackToken: 'slack.userToken',
 	/** The summary as a thread reply (`message`) or a `.md` file (`file`). */
 	slackSummaryAs: 'slack.summaryAs',
+	/** What the notification's Send posts: `both`, `summary` or `transcript`. */
+	slackContent: 'slack.content',
 	/** Post without the Send/Dismiss notification first. */
 	slackSendWithoutAsking: 'slack.sendWithoutAsking',
 

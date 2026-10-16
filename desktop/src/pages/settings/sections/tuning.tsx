@@ -3,9 +3,10 @@ import { DEFAULT_MODEL_OPTIONS } from '~/providers/preference'
 import { m } from '~/paraglide/messages.js'
 import { Button } from '~/components/ui/button'
 import { Switch } from '~/components/ui/switch'
+import { Input } from '~/components/ui/input'
 import { getFriendlyModelName } from '~/lib/model'
 import { HintsGroup } from './hints'
-import { ActionRow, SettingsGroup, SettingsNote, SettingsRow, type SettingsViewModel } from './shared'
+import { ActionRow, SettingsGroup, SettingsNote, SettingsRow, rowControlClass, type SettingsViewModel } from './shared'
 
 export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; onOpenWhisper: () => void }) {
 	const options = vm.preference.modelOptions
@@ -26,6 +27,22 @@ export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; on
 					<Switch checked={vm.preference.stableTimestampsEnabled} onCheckedChange={vm.handleStableTimestampsToggle} />
 				</SettingsRow>
 				{vm.preference.stableTimestampsEnabled && <SettingsNote>{m.stableTimestampsSlowNote()}</SettingsNote>}
+				<SettingsRow label={m.spokenLanguages()} description={m.spokenLanguagesInfo()}>
+					{/* Uncontrolled, so a trailing comma stays while typing; the parsed list is what's stored. */}
+					<Input
+						defaultValue={vm.preference.spokenLanguages.join(', ')}
+						onChange={(e) =>
+							vm.preference.setSpokenLanguages(
+								e.target.value
+									.split(',')
+									.map((code) => code.trim().toLowerCase())
+									.filter(Boolean),
+							)
+						}
+						placeholder="uk, en"
+						className={`w-56 ${rowControlClass}`}
+					/>
+				</SettingsRow>
 			</SettingsGroup>
 			<HintsGroup vm={vm} />
 			<SettingsGroup title={m.extraPasses()}>

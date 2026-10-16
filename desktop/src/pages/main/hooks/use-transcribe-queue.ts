@@ -15,9 +15,12 @@ import { notify } from '~/lib/notify'
 import { autoProjectName } from '~/lib/project-name'
 import { gpuOutOfMemoryBefore, rememberGpuOutOfMemory } from '~/lib/gpu-memory'
 import { fatalRunError, isGpuOutOfMemory, isUserError } from '~/lib/server-errors'
+import type { SlackCall } from '~/lib/slack'
 import { carrySpeakerNames, speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
 import { mergeRuns } from '~/lib/vote'
-import { extraPasses, hintOptions, type Hints } from './transcribe-hints'
+import { correctTerms } from '~/lib/hints'
+import { applyReplacements, fixSpelling } from '~/lib/spelling'
+import { callNames, extraPasses, hintOptions, type Hints } from './transcribe-hints'
 import { vocabularyPath } from '~/lib/vocabulary'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
@@ -75,6 +78,8 @@ export interface Job {
 	speakerNames?: SpeakerNames
 	/** Who the call app showed talking during the recording; names speakers after transcription. */
 	callSpeakers?: CallSpeakerTurn[]
+	/** The Slack huddle this was recorded from: what the Send to Slack menu posts to. */
+	slackCall?: SlackCall
 	/** The transcript this job redoes, whose speaker names move onto the new speakers when it finishes. */
 	previous?: PreviousTranscript
 	/** What auto-export did with this transcript, when it ran. */
@@ -451,6 +456,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 								userPrompt: options.modelOptions.init_prompt,
 								mainModelPath: current.modelPath,
 								vocabularyPath: options.hints.learn ? await vocabularyPath(current.projectsPath) : undefined,
+								lang: options.modelOptions.lang,
+								languages: options.spokenLanguages,
 								loadModel: async (modelPath) => {
 									await invoke('load_model', {
 										modelPath,
@@ -472,6 +479,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 						options: {
 							path: next.path,
 							...withoutUnsupportedOptions(options.modelOptions, options.modelMetadata?.capabilities),
+							...(options.spokenLanguages.length ? { languages: options.spokenLanguages } : {}),
 							...shared,
 							...hints?.prompt,
 						},
@@ -498,6 +506,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 									},
 									isAborted: () => abortCurrentRef.current || abortAllRef.current,
 									onWarning: (message) => toast.warning(m.extraPassFailed({ message }), { position: 'bottom-center', duration: 8000 }),
+									lang: options.modelOptions.lang,
+									languages: options.spokenLanguages,
 								},
 							)
 						} finally {
@@ -505,7 +515,20 @@ export function useTranscribeQueue(): TranscribeQueue {
 						}
 						if (abortCurrentRef.current || abortAllRef.current) throw new Error('cancelled')
 					}
-					const heard = mergeRuns(result.segments, runs)
+					let heard = mergeRuns(result.segments, runs)
+					// The known terms come from the hints' vocabulary: without hints there are none to fix by.
+					const families = hints?.families ?? []
+					heard = fixSpelling(heard, families)
+					if (options.hints.enabled && options.hints.correct && options.hints.refiner !== 'words') {
+						try {
+							const names = options.hints.callNames ? callNames(next.callSpeakers) : []
+							const known = families.map((family) => family.join(' / '))
+							const lines = heard.map((segment) => segment.text.trim())
+							heard = applyReplacements(heard, await correctTerms(lines, names, known, options.hints, options.ai.connection))
+						} catch (error) {
+							toast.warning(m.hintsFailed({ message: errorParts(error).message }), { position: 'bottom-center', duration: 8000 })
+						}
+					}
 					// A recorded call knows who was talking when: give each sentence that person.
 					const fromCall = next.callSpeakers && speakersFromCall(heard, next.callSpeakers)
 					const segments = fromCall ? fromCall.segments : heard
@@ -695,6 +718,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 				thread: record.thread,
 				speakerNames: record.speakerNames,
 				callSpeakers: record.callSpeakers,
+				slackCall: record.slackCall,
 			}
 			pinnedRef.current = true
 			commit(runningRef.current ? [...jobsRef.current, job] : [job])

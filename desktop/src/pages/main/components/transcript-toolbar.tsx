@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, Download, NotebookPen, Pencil, PilcrowLeft, PilcrowRight, Plus, Search, Settings2, Sparkles, X } from 'lucide-react'
+import { ChevronDown, Download, NotebookPen, Pencil, PilcrowLeft, PilcrowRight, Plus, Search, Send, Settings2, Sparkles, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { m } from '~/paraglide/messages.js'
 import { usePreferenceProvider } from '~/providers/preference'
@@ -202,6 +202,38 @@ function SummaryMenu({ job, tab, setTab }: { job: Job | null; tab: TranscriptTab
 	)
 }
 
+/** Send a recorded Slack huddle to its thread: the summary, the transcript or both. */
+function SlackMenu({ job }: { job: Job | null }) {
+	const { slack } = useSession()
+	if (!slack.enabled || !job?.slackCall || job.status !== 'done') return null
+	const hasSummary = Boolean(job.summary?.trim())
+	const hasText = job.segments.length > 0
+	const items = [
+		{ content: 'both', label: m.slackSendBoth(), disabled: !hasSummary || !hasText },
+		{ content: 'summary', label: m.slackSendSummary(), disabled: !hasSummary },
+		{ content: 'transcript', label: m.slackSendTranscript(), disabled: !hasText },
+	] as const
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button variant="ghost" size="sm" disabled={slack.sending[job.id]} className="rounded-full px-3 text-[13px] font-medium">
+					{slack.sending[job.id] ? <Spinner className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
+					{m.slackSendTo()}
+					<ChevronDown className="h-3 w-3 opacity-70" />
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start" className="w-56">
+				{items.map((item) => (
+					<DropdownMenuItem key={item.content} disabled={item.disabled} onClick={() => void slack.send(job.id, item.content)}>
+						{item.label}
+					</DropdownMenuItem>
+				))}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+}
+
 export default function TranscriptToolbar({
 	job,
 	query,
@@ -362,6 +394,8 @@ export default function TranscriptToolbar({
 							</Button>
 
 							<SummaryMenu job={job} tab={tab} setTab={setTab} />
+
+							<SlackMenu job={job} />
 
 							<ViewOptions options={options} />
 

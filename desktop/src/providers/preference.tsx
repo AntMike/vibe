@@ -115,6 +115,9 @@ export interface Preference {
 	/** Model paths each file is transcribed again with, merged into the main pass. */
 	extraPasses: string[]
 	setExtraPasses: ModifyState<string[]>
+	/** Language codes auto-detection may choose between; empty is any. */
+	spokenLanguages: string[]
+	setSpokenLanguages: ModifyState<string[]>
 
 	gpuDevice: number | null
 	setGpuDevice: ModifyState<number | null>
@@ -221,6 +224,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	// Fields added later fall back to their defaults instead of reading as undefined.
 	const hints = useMemo(() => ({ ...DEFAULT_HINTS, ...storedHints }), [storedHints])
 	const [extraPasses, setExtraPasses] = usePersisted<string[]>(CONFIG_KEYS.extraPasses, [])
+	const [spokenLanguages, setSpokenLanguages] = usePersisted<string[]>(CONFIG_KEYS.spokenLanguages, [])
 	// The pre-3.2 `summarize.llm` object is read once when `ai` is missing, so nobody loses a key or a prompt.
 	const [ai, setAi] = usePersisted<AiSettings>(
 		CONFIG_KEYS.ai,
@@ -421,6 +425,8 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setHints,
 		extraPasses,
 		setExtraPasses,
+		spokenLanguages,
+		setSpokenLanguages,
 		advancedTranscribeOptions,
 		setAdvancedTranscribeOptions,
 		recentLanguages,

@@ -244,6 +244,9 @@ impl ServerProcess {
                 form = form.text("language", lang.clone());
             }
         }
+        if let Some(languages) = options.languages.as_ref().filter(|languages| !languages.is_empty()) {
+            form = form.text("languages", languages.join(","));
+        }
         if options.translate.unwrap_or(false) {
             form = form.text("translate", "true");
         }

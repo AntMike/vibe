@@ -130,10 +130,11 @@ pub fn show_meeting_toast(app: &AppHandle, source: Source, on_action: impl Fn(&A
 }
 
 /// A Windows notification offering to post a finished transcript to its Slack huddle thread. Send
-/// emits `slack_send` with `job_id`; other platforms ask inside the app instead.
+/// emits `slack_send` with `job_id`; Review, or a click on the notification, brings Vibe up and
+/// emits `slack_review` so the summary can be edited before sending from the app.
 #[tauri::command]
 #[cfg_attr(not(windows), allow(unused_variables))]
-pub fn show_slack_send_toast(app: AppHandle, title: String, body: String, send: String, dismiss: String, job_id: String) {
+pub fn show_slack_send_toast(app: AppHandle, title: String, body: String, send: String, review: String, dismiss: String, job_id: String) {
     #[cfg(windows)]
     {
         use tauri::Emitter;
@@ -144,10 +145,18 @@ pub fn show_slack_send_toast(app: AppHandle, title: String, body: String, send: 
             .title(&title)
             .text1(&body)
             .add_button(&send, "send")
+            .add_button(&review, "review")
             .add_button(&dismiss, "dismiss")
             .on_activated(move |action| {
-                if action.as_deref() == Some("send") {
-                    handle.emit("slack_send", &job_id).log_error();
+                match action.as_deref() {
+                    Some("send") => {
+                        handle.emit("slack_send", &job_id).log_error();
+                    }
+                    Some("dismiss") => {}
+                    _ => {
+                        crate::tray::show_main_window(&handle);
+                        handle.emit("slack_review", &job_id).log_error();
+                    }
                 }
                 Ok(())
             })
