@@ -59,9 +59,12 @@ enum Command {
         /// Parakeet only: decode this many times (1-8) and keep the surest words.
         #[arg(long, default_value_t = 1)]
         draft_runs: i32,
-        /// Parakeet only: comma-separated terms to lean toward.
+        /// Comma-separated terms to lean toward (Parakeet and Whisper).
         #[arg(long, value_delimiter = ',')]
         hotwords: Vec<String>,
+        /// Comma-separated candidates for language auto-detection.
+        #[arg(long, value_delimiter = ',')]
+        languages: Vec<String>,
     },
     Serve {
         model: Option<String>,
@@ -131,6 +134,7 @@ pub async fn run() -> anyhow::Result<()> {
             gpu_device,
             draft_runs,
             hotwords,
+            languages,
         } => {
             transcribe_command(
                 TranscribeArgs {
@@ -152,6 +156,7 @@ pub async fn run() -> anyhow::Result<()> {
                     gpu_device,
                     draft_runs,
                     hotwords,
+                    languages,
                 },
                 config,
             )
@@ -216,6 +221,7 @@ async fn transcribe_command(args: TranscribeArgs, config: AppConfig) -> anyhow::
                 vad_model_path: args.vad_model,
                 draft_runs: args.draft_runs,
                 hotwords: args.hotwords,
+                languages: args.languages,
                 ..TranscribeOptions::default()
             },
         )
@@ -234,7 +240,10 @@ async fn transcribe_command(args: TranscribeArgs, config: AppConfig) -> anyhow::
             );
         }
     } else {
-        println!("{}", result.text());
+        // One segment per line: joined as they are, words merge across segments.
+        for segment in result.segments.iter().filter(|segment| !segment.text.trim().is_empty()) {
+            println!("{}", segment.text.trim());
+        }
     }
     Ok(())
 }
@@ -278,4 +287,5 @@ struct TranscribeArgs {
     gpu_device: i32,
     draft_runs: i32,
     hotwords: Vec<String>,
+    languages: Vec<String>,
 }
