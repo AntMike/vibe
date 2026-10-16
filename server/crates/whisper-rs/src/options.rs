@@ -44,7 +44,7 @@ pub struct TranscribeOptions {
     /// the first hear a slightly shifted or sped-up copy, and every stretch they
     /// hear differently keeps the surest variant.
     pub draft_runs: i32,
-    /// Parakeet only: known terms the decoder leans toward spelling out.
+    /// Known terms the decoder leans toward spelling out (Parakeet and Whisper).
     pub hotwords: Vec<String>,
 }
 

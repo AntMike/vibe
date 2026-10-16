@@ -12,8 +12,8 @@ use crate::server::{error, AppState, MAX_UPLOAD_SIZE};
 /// Multipart form: `file` plus optional fields. `draft_runs` (integer, 1-8,
 /// default 1) decodes Parakeet audio that many times, later runs on slightly
 /// shifted or sped-up copies, and keeps the most confident words where the runs
-/// disagree. `hotwords` (comma-separated) are terms Parakeet leans toward
-/// spelling out. Other engines ignore both.
+/// disagree; other engines ignore it. `hotwords` (comma-separated) are terms
+/// Parakeet and Whisper lean toward spelling out.
 #[utoipa::path(
     post,
     path = "/v1/audio/transcriptions",

@@ -92,7 +92,11 @@ impl Context {
             engine_callbacks.on_progress = Some(Box::new(&mut **on_progress));
         }
         if let Some(on_segment) = callbacks.on_segment.as_mut() {
-            engine_callbacks.on_new_segment = Some(Box::new(|segment: &FullSegment| on_segment(convert(segment))));
+            engine_callbacks.on_new_segment = Some(Box::new(|segment: &FullSegment| {
+                if !is_hallucination(&segment.text) {
+                    on_segment(convert(segment))
+                }
+            }));
         }
         if let Some(should_abort) = callbacks.should_abort.as_mut() {
             engine_callbacks.should_abort = Some(Box::new(&mut **should_abort));
@@ -102,9 +106,29 @@ impl Context {
         drop(engine_callbacks);
 
         Ok(TranscribeResult {
-            segments: segments.iter().map(convert).collect(),
+            segments: segments
+                .iter()
+                .filter(|segment| !is_hallucination(&segment.text))
+                .map(convert)
+                .collect(),
         })
     }
+}
+
+/// Lines Whisper makes up over silence and noise, learned from the subtitle
+/// credits it was trained on, lowercase. A segment containing one is dropped.
+// ponytail: substring match on a fixed list; add lines as new ones turn up.
+const HALLUCINATIONS: &[&str] = &[
+    "субтитрувальниця",
+    "дякую за перегляд",
+    "subtitles by",
+    "thanks for watching",
+    "продолжение следует",
+];
+
+fn is_hallucination(text: &str) -> bool {
+    let text = text.to_lowercase();
+    HALLUCINATIONS.iter().any(|line| text.contains(line))
 }
 
 fn convert(segment: &FullSegment) -> Segment {
@@ -160,7 +184,7 @@ fn transcribe_stable_timestamps(
             whisper.full_stream(&params, window, &mut engine_callbacks)?
         };
 
-        for segment in &decoded {
+        for segment in decoded.iter().filter(|segment| !is_hallucination(&segment.text)) {
             let mut segment = convert(segment);
             segment.start += t0cs;
             segment.end += t0cs;
@@ -312,7 +336,7 @@ fn transcribe_windows(
         };
 
         let t0cs = (window.start_sample / (SAMPLE_RATE / 100)) as i64;
-        for segment in &decoded {
+        for segment in decoded.iter().filter(|segment| !is_hallucination(&segment.text)) {
             let mut segment = convert(segment);
             segment.start += t0cs;
             segment.end += t0cs;
@@ -436,6 +460,7 @@ fn full_params(options: &TranscribeOptions) -> FullParams {
     params.language = options.language.clone();
     params.languages = options.languages.clone();
     params.initial_prompt = options.prompt.clone();
+    params.hotwords = options.hotwords.clone();
     params.carry_initial_prompt = options.carry_prompt;
     params
 }
@@ -610,7 +635,16 @@ mod tests {
         ]);
         assert_eq!(langs, vec![uk, uk, en, uk]);
         // A Russian recording stays Russian.
-        assert_eq!(resolve_languages(&[detection(0, 30.0, ru, 0.9), detection(0, 3.0, uk, 0.8)]), vec![ru, ru]);
+        assert_eq!(
+            resolve_languages(&[detection(0, 30.0, ru, 0.9), detection(0, 3.0, uk, 0.8)]),
+            vec![ru, ru]
+        );
+    }
+
+    #[test]
+    fn made_up_subtitle_credits_are_hallucinations() {
+        assert!(is_hallucination(" Субтитрувальниця Оля Шор"));
+        assert!(!is_hallucination(" Добре, тоді переходимо до наступного пункту."));
     }
 
     #[test]

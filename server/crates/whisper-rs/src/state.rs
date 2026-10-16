@@ -3,6 +3,9 @@
 
 use ggml_rs_sys as sys;
 
+use std::sync::Arc;
+
+use crate::boost::Boost;
 use crate::kv::KvCache;
 use crate::mel::Mel;
 use crate::model::Model;
@@ -200,6 +203,10 @@ pub(crate) struct State {
     pub prompt_past0: Vec<i32>,
     pub prompt_past1: Vec<i32>,
 
+    /// The term boost for the last hotwords seen, kept across calls: building it
+    /// scans the whole vocab per term byte, too slow to repeat for every window.
+    pub boost: Option<(Vec<String>, Arc<Boost>)>,
+
     // timing accumulators (microseconds)
     pub t_mel_us: u128,
     pub t_encode_us: u128,
@@ -373,6 +380,7 @@ impl State {
                 lang_id: 0,
                 prompt_past0: Vec::new(),
                 prompt_past1: Vec::new(),
+                boost: None,
                 t_mel_us: 0,
                 t_encode_us: 0,
                 t_decode_us: 0,

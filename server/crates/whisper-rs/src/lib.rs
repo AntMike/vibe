@@ -16,6 +16,8 @@ mod model_file;
 mod options;
 
 #[cfg(feature = "ffi")]
+mod boost;
+#[cfg(feature = "ffi")]
 mod context;
 #[cfg(feature = "ffi")]
 mod decode;
@@ -193,6 +195,8 @@ pub struct FullParams {
 
     pub suppress_blank: bool,
     pub suppress_nst: bool,
+    /// Known terms the decoder leans toward spelling out.
+    pub hotwords: Vec<String>,
 
     pub temperature: f32,
     pub max_initial_ts: f32,
@@ -235,6 +239,7 @@ impl Default for FullParams {
             languages: Vec::new(),
             suppress_blank: true,
             suppress_nst: false,
+            hotwords: Vec::new(),
             temperature: 0.0,
             max_initial_ts: 1.0,
             length_penalty: -1.0,

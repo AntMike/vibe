@@ -3,6 +3,7 @@
 //! sampling (`whisper_sample_token*`) and sequence scoring
 //! (`whisper_sequence_score`).
 
+use crate::boost::Boost;
 use crate::lang;
 use crate::mel::CHUNK_SIZE;
 use crate::model::Model;
@@ -108,6 +109,7 @@ pub(crate) fn process_logits(
     decoder: &mut DecoderState,
     params: &FullParams,
     temperature: f32,
+    boost: Option<&Boost>,
 ) {
     let vocab = &model.vocab;
     let n_logits = vocab.n_vocab as usize;
@@ -221,6 +223,10 @@ pub(crate) fn process_logits(
         for l in &mut logits[token_beg..(token_beg + tid0).min(n_logits)] {
             *l = f32::NEG_INFINITY;
         }
+    }
+
+    if let Some(boost) = boost {
+        boost.apply(&decoder.sequence.tokens, vocab, logits);
     }
 
     compute_logprobs(&decoder.logits, n_logits, &mut decoder.logprobs);

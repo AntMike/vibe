@@ -3,6 +3,9 @@
 //! The per-token logit filtering and sampling it drives lives in
 //! [`crate::sampling`].
 
+use std::sync::Arc;
+
+use crate::boost::Boost;
 use crate::decode::decode;
 use crate::encode::{encode, Runtime};
 use crate::lang;
@@ -124,6 +127,13 @@ pub(crate) fn full(
             return Ok(result_all);
         }
     }
+
+    if params.hotwords.is_empty() {
+        state.boost = None;
+    } else if state.boost.as_ref().is_none_or(|(terms, _)| *terms != params.hotwords) {
+        state.boost = Some((params.hotwords.clone(), Arc::new(Boost::new(&model.vocab, &params.hotwords))));
+    }
+    let boost = state.boost.as_ref().map(|(_, boost)| Arc::clone(boost));
 
     if params.token_timestamps {
         state.t_beg = 0;
@@ -354,7 +364,7 @@ pub(crate) fn full(
                 state.decoders[0].i_batch = prompt.len() - 1;
                 {
                     let logits = std::mem::take(&mut state.logits);
-                    process_logits(model, &logits, &mut state.decoders[0], &params, t_cur);
+                    process_logits(model, &logits, &mut state.decoders[0], &params, t_cur, boost.as_deref());
                     state.logits = logits;
                 }
                 for j in 1..n_decoders_cur {
@@ -562,7 +572,7 @@ pub(crate) fn full(
                         if state.decoders[j].failed || state.decoders[j].completed {
                             continue;
                         }
-                        process_logits(model, &logits, &mut state.decoders[j], &params, t_cur);
+                        process_logits(model, &logits, &mut state.decoders[j], &params, t_cur, boost.as_deref());
                     }
                     state.logits = logits;
                     state.t_sample_us += t0.elapsed().as_micros();
