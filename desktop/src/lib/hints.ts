@@ -145,6 +145,42 @@ export function parseReplacements(reply: string): Replacement[] {
 		.filter(({ from, to }) => from && to)
 }
 
+const FIXES_FENCE = '```fixes'
+
+/**
+ * Appended to a summary prompt that sees the transcript: the summary call also lists what speech
+ * recognition misheard, so fixing the transcript costs no call of its own. See `splitFixes`.
+ */
+export const FIXES_INSTRUCTION = `After the summary, at the very end, list the speech recognition mistakes in the transcript as a fenced block: a line ${FIXES_FENCE}, then a JSON array [{"from": "...", "to": "..."}], then a line \`\`\`. Write nothing after it.
+- from: a word or a phrase of at most five words, exactly as the transcript writes it, that was misheard (a similar-sounding wrong word, a garbled name or term); to: what was really said.
+- Keep the speaker's language, script and inflected endings; never translate, rephrase or fix grammar, slang or Russian words.
+- Only fixes you are sure of: a wrong fix does more harm than a missed one. [] when there are none.`
+
+/** A summary as it streams, without its fixes block: a fence still arriving is cut off too. */
+export function withoutFixes(text: string): string {
+	const at = text.indexOf(FIXES_FENCE)
+	if (at >= 0) return text.slice(0, at)
+	for (let length = FIXES_FENCE.length - 1; length > 0; length -= 1) {
+		if (text.endsWith(FIXES_FENCE.slice(0, length))) return text.slice(0, -length)
+	}
+	return text
+}
+
+/** A finished summary reply split into the summary and its fixes; a missing or broken block is no fixes. */
+export function splitFixes(reply: string): { summary: string; fixes: Replacement[] } {
+	const at = reply.indexOf(FIXES_FENCE)
+	if (at < 0) return { summary: reply.trim(), fixes: [] }
+	const block = reply.slice(at + FIXES_FENCE.length)
+	const end = block.indexOf('```')
+	let fixes: Replacement[] = []
+	try {
+		fixes = parseReplacements(end >= 0 ? block.slice(0, end) : block)
+	} catch {
+		// A summary is still a summary when its fixes did not parse.
+	}
+	return { summary: reply.slice(0, at).trim(), fixes }
+}
+
 /** The AI connection with the hints' own model, or own command for a custom CLI, when one is set. */
 function hintsConnection(settings: HintsSettings, connection: AiConnection): AiConnection {
 	const own = settings.aiModel?.trim()

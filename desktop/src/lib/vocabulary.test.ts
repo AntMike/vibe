@@ -15,6 +15,14 @@ describe('vocabulary', () => {
 		expect(knownTerms(learn(twice, ['Coin Flip', "В'ячеслав"]))).toEqual(['Coinflip', 'Mumblum'])
 	})
 
+	it('learns from the same recording again without counting it twice', () => {
+		const once = learn(emptyVocabulary(), ['Mumblum'])
+		const again = learn(once, ['Mumblum', 'PRD'], true)
+		expect(again.recordings).toBe(1)
+		expect(again.terms.Mumblum.seen).toBe(1)
+		expect(again.terms.PRD).toEqual({ seen: 1, last: 1 })
+	})
+
 	it('forgets a one-off soon and a known term only once it is out of use', () => {
 		let vocabulary = learn(learn(emptyVocabulary(), ['Mumblum', 'Дімослав']), ['Mumblum'])
 		for (let i = 0; i < 9; i++) vocabulary = learn(vocabulary, ['Figma'])

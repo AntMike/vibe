@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { m } from '~/paraglide/messages.js'
 import { appLanguageName, chunkLines, createClient, fillPrompt, inputBudgetBytes, utf8Bytes, type AiClient } from '~/lib/ai'
+import { FIXES_INSTRUCTION, splitFixes, withoutFixes } from '~/lib/hints'
 import { isAutoProjectName, summaryProjectName } from '~/lib/project-name'
+import type { Replacement } from '~/lib/spelling'
+import { dropBlocked, learn, loadVocabulary, saveVocabulary, vocabularyPath } from '~/lib/vocabulary'
 import { asText } from '~/lib/transcript'
 import { usePreferenceProvider } from '~/providers/preference'
 import type { Job, TranscribeQueue } from './use-transcribe-queue'
@@ -54,6 +57,22 @@ const PLAIN_TITLE = 'Reply with only a 2-6 word title for this summary, in its l
 const CLICKBAIT_TITLE =
 	'Reply with only a clickbait Facebook-style headline for this meeting, in its language, under 12 words. Exaggerate what really happened. Example: "SHOCK! Designer reads out the edits, the whole department in tears (ATTENDANCE MANDATORY)"'
 
+/**
+ * One-word fixes join the vocabulary, so the free spelling fixer catches them next time with no AI;
+ * phrases are only applied. Never throws: a broken vocabulary is left for the user to fix.
+ */
+async function learnFixes(fixes: Replacement[], projectsPath: string | null | undefined) {
+	const words = fixes.filter(({ from, to }) => !/\s/.test(from) && !/\s/.test(to)).map(({ to }) => to)
+	if (words.length === 0) return
+	try {
+		const path = await vocabularyPath(projectsPath)
+		const vocabulary = await loadVocabulary(path)
+		await saveVocabulary(path, learn(vocabulary, dropBlocked(vocabulary, words), true))
+	} catch (error) {
+		console.warn('learning the summary fixes failed:', error)
+	}
+}
+
 function useRecord<T>() {
 	const [record, setRecord] = useState<Record<string, T>>({})
 	const set = useCallback((id: string, value: T) => setRecord((previous) => ({ ...previous, [id]: value })), [])
@@ -92,6 +111,8 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 	const previousStatuses = useRef<Map<string, Job['status']>>(new Map())
 
 	const { connection, tasks } = preference.ai
+	const learnTerms = preference.hints.enabled && preference.hints.learn
+	const { projectsPath } = preference
 	const task = tasks.summary
 	const enabled = task.enabled
 	const client = useMemo<AiClient>(() => createClient(connection), [connection])
@@ -110,26 +131,36 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 			setShowSummary(job.id)
 			try {
 				const values = { language: appLanguageName(), speakers: speakersOf(job) }
-				const frame = fillPrompt(template, { ...values, transcript: '' })
-				const chunks = chunkLines(transcriptOf(job).split('\n'), frame, connection.contextTokens)
-				let source = chunks[0]
+				// Every call that reads the transcript also lists what was misheard in it; the call
+				// summarizing the parts reads only summaries, so it is not asked.
+				const withFixes = (transcript: string) => `${fillPrompt(template, { ...values, transcript })}\n\n${FIXES_INSTRUCTION}`
+				const chunks = chunkLines(transcriptOf(job).split('\n'), withFixes(''), connection.contextTokens)
+				const fixes: Replacement[] = []
+				let final = withFixes(chunks[0])
 				if (chunks.length > 1) {
 					const parts: string[] = []
 					for (const [index, chunk] of chunks.entries()) {
 						setProgressFor(job.id, { done: index, total: chunks.length })
-						parts.push((await client.ask(fillPrompt(template, { ...values, transcript: chunk }))).trim())
+						const part = splitFixes(await client.ask(withFixes(chunk)))
+						parts.push(part.summary)
+						fixes.push(...part.fixes)
 					}
 					setProgressFor(job.id, { done: chunks.length, total: chunks.length })
-					source = joinParts(parts)
+					final = fillPrompt(template, { ...values, transcript: joinParts(parts) })
 				}
-				let text = ''
-				await client.stream(fillPrompt(template, { ...values, transcript: source }), (token) => {
-					text += token
-					setDraft(job.id, text)
+				let reply = ''
+				await client.stream(final, (token) => {
+					reply += token
+					setDraft(job.id, withoutFixes(reply))
 				})
-				text = text.trim()
+				const { summary: text, fixes: last } = splitFixes(reply)
 				if (!text) throw new Error(m.summaryFailed())
 				queue.setJobSummary(job.id, text)
+				fixes.push(...last)
+				if (fixes.length > 0) {
+					queue.fixSegments(job.id, fixes)
+					if (learnTerms) void learnFixes(fixes, projectsPath)
+				}
 				// The first summary names an auto-named project; a regenerated one leaves the title alone.
 				if (!job.summary && isAutoProjectName(job.name)) {
 					void client
@@ -157,6 +188,8 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 			task.prompt,
 			task.clickbaitTitle,
 			connection.contextTokens,
+			learnTerms,
+			projectsPath,
 			client,
 			queue,
 			transcriptOf,

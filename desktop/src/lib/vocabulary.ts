@@ -89,9 +89,13 @@ function entry(main: string, seen: number, last: number, forms: string[] = []): 
 	return kept.length > 0 ? { seen, last, forms: kept.slice(0, MAX_FORMS) } : { seen, last }
 }
 
-/** The vocabulary after one more recording that turned up `terms`. */
-export function learn(vocabulary: Vocabulary, terms: string[]): Vocabulary {
-	const recordings = vocabulary.recordings + 1
+/**
+ * The vocabulary after one more recording that turned up `terms`. With `again`, the terms come from
+ * the latest recording once more (its summary's fixes): no recording is added, and a term that
+ * recording already counted is not counted twice.
+ */
+export function learn(vocabulary: Vocabulary, terms: string[], again = false): Vocabulary {
+	const recordings = vocabulary.recordings + (again ? 0 : 1)
 	const blocked = new Set(vocabulary.blocked.map(key))
 	const spelling = new Map(Object.keys(vocabulary.terms).map((term) => [key(term), term]))
 	const next = { ...vocabulary.terms }
@@ -101,7 +105,7 @@ export function learn(vocabulary: Vocabulary, terms: string[]): Vocabulary {
 		if (!term || blocked.has(id)) continue
 		const known = spelling.get(id)
 		// A second spelling in the same recording joins the family without counting twice.
-		const seen = (known ? next[known].seen : 0) + (counted.has(id) ? 0 : 1)
+		const seen = (known ? next[known].seen : 0) + (counted.has(id) || (known && next[known].last === recordings) ? 0 : 1)
 		counted.add(id)
 		if (known) next[known] = entry(known, seen, recordings, [...(next[known].forms ?? []), term])
 		else {

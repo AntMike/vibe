@@ -20,7 +20,7 @@ import { carrySpeakerNames, speakersFromCall, typedSpeakerNames, type CallSpeake
 import { mergeRuns } from '~/lib/vote'
 import { canConfuse, decodeSpeaker, languageDoubts, speakersToRedo, withSpeakerLines, type LanguageCheck } from '~/lib/speaker-language'
 import { correctTerms } from '~/lib/hints'
-import { applyReplacements, fixSpelling } from '~/lib/spelling'
+import { applyReplacements, fixSpelling, type Replacement } from '~/lib/spelling'
 import { callNames, extraPasses, hintOptions, spokenLanguages, type Hints } from './transcribe-hints'
 import { vocabularyPath } from '~/lib/vocabulary'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
@@ -140,6 +140,8 @@ export interface TranscribeQueue {
 	updateSegmentText: (jobId: string, segmentIndex: number, text: string) => void
 	/** Drop one segment, the way clearing a line in the editor does. Persists like the text edits. */
 	removeSegment: (jobId: string, segmentIndex: number) => void
+	/** Respell misheard words and phrases in every line, as the summary's fixes say. Persists like the edits. */
+	fixSegments: (jobId: string, fixes: Replacement[]) => void
 	/**
 	 * Rename the visible project and its persisted record, when one exists. With `from`, only while
 	 * the title is still that, so a rename the user made meanwhile wins.
@@ -829,6 +831,18 @@ export function useTranscribeQueue(): TranscribeQueue {
 		[commit],
 	)
 
+	const fixSegments = useCallback(
+		(jobId: string, fixes: Replacement[]) => {
+			const job = jobsRef.current.find((candidate) => candidate.id === jobId)
+			if (!job) return
+			const segments = applyReplacements(job.segments, fixes)
+			if (segments.every((segment, index) => segment === job.segments[index])) return
+			commit(jobsRef.current.map((candidate) => (candidate.id === jobId ? { ...candidate, segments } : candidate)))
+			if (job.savedPath) void updateTranscriptSegments(job.savedPath, segments)
+		},
+		[commit],
+	)
+
 	const setSegmentSpeaker = useCallback(
 		(jobId: string, segmentIndex: number, speaker: number) => {
 			const job = jobsRef.current.find((candidate) => candidate.id === jobId)
@@ -989,6 +1003,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 		hydrate,
 		updateSegmentText,
 		removeSegment,
+		fixSegments,
 		renameJob,
 		previewJobName,
 		setJobSummary,

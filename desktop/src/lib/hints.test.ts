@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { cliCommand, DEFAULT_AI } from './ai'
-import { DEFAULT_HINTS, parseGlossary, parseReplacements, rareWords, refineDraft } from './hints'
+import { DEFAULT_HINTS, parseGlossary, parseReplacements, rareWords, refineDraft, splitFixes, withoutFixes } from './hints'
 
 const LEAN = '--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence'
 
@@ -20,6 +20,31 @@ describe('rareWords', () => {
 
 	it('works in Cyrillic', () => {
 		expect(rareWords('Вчора ми говорили з Олексієм про Kubernetes.')).toEqual(['Олексієм', 'Kubernetes'])
+	})
+})
+
+describe('splitFixes', () => {
+	it('splits the trailing fixes block off the summary', () => {
+		const reply = '# Stand-up\n\nAll good.\n\n```fixes\n[{"from": "зайнувати", "to": "заінвайтити"}, {"from": "Боти фулл-паті", "to": "Або ти фул-паті"}]\n```\n'
+		expect(splitFixes(reply)).toEqual({
+			summary: '# Stand-up\n\nAll good.',
+			fixes: [
+				{ from: 'зайнувати', to: 'заінвайтити' },
+				{ from: 'Боти фулл-паті', to: 'Або ти фул-паті' },
+			],
+		})
+	})
+
+	it('keeps the summary when the block is missing, unclosed or broken', () => {
+		expect(splitFixes('Just a summary.')).toEqual({ summary: 'Just a summary.', fixes: [] })
+		expect(splitFixes('Sum.\n```fixes\n[{"from": "a", "to": "b"}]')).toEqual({ summary: 'Sum.', fixes: [{ from: 'a', to: 'b' }] })
+		expect(splitFixes('Sum.\n```fixes\nnot json\n```')).toEqual({ summary: 'Sum.', fixes: [] })
+	})
+
+	it('hides the block while it streams in, a half-written fence too', () => {
+		expect(withoutFixes('Sum.\n```fixes\n[{"fr')).toBe('Sum.\n')
+		expect(withoutFixes('Sum.\n``')).toBe('Sum.\n')
+		expect(withoutFixes('Sum.')).toBe('Sum.')
 	})
 })
 
