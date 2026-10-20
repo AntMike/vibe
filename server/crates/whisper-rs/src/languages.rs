@@ -39,11 +39,16 @@ pub(crate) fn window_languages(
         if callbacks.should_abort.as_mut().is_some_and(|should_abort| should_abort()) {
             return Err(Error::Aborted);
         }
-        let (lang, prob) = whisper.detect_language(
+        // A sliver of a turn, too short for one mel frame, has no language to detect: it is left
+        // unsure, so it takes its speaker's language like a short reply, instead of failing the file.
+        let (lang, prob) = match whisper.detect_language(
             &samples[window.start_sample..window.end_sample],
             params.n_threads,
             &params.languages,
-        )?;
+        ) {
+            Err(Error::LanguageDetection) => (0, 0.0),
+            detected => detected?,
+        };
         let secs = (window.end_sample - window.start_sample) as f32 / SAMPLE_RATE as f32;
         tracing::debug!(
             start = window.start_sample as f32 / SAMPLE_RATE as f32,
