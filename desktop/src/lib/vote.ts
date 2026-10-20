@@ -119,12 +119,12 @@ export function voteWords(main: Segment[], runs: Segment[][]): Segment[] {
 		const to = index === main.length - 1 ? Infinity : (segment.stop + main[index + 1].start) / 2
 		const line = words(segment.text)
 		if (line.length === 0) return segment
-		const alignments = timed.map((run) =>
-			align(
-				line,
-				run.filter(({ at }) => at >= from && at < to).map(({ word }) => word),
-			),
-		)
+		// A run with no words under the line heard it at other times or not at all: it abstains rather
+		// than votes every word out. Parakeet can squeeze a whole turn into the second before it.
+		const alignments = timed
+			.map((run) => run.filter(({ at }) => at >= from && at < to).map(({ word }) => word))
+			.filter((heard) => heard.length > 0)
+			.map((heard) => align(line, heard))
 		const voted: string[] = [
 			...majority(
 				[],

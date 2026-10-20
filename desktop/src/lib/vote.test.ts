@@ -37,6 +37,14 @@ describe('voteWords', () => {
 		const main = [line(0, 1000, 'fat cat')]
 		expect(voteWords(main, [[line(0, 1000, 'flat cat')]])).toEqual(main)
 	})
+
+	it('lets a run that heard nothing under a line abstain instead of voting it away', () => {
+		const main = [line(0, 1000, 'Next is Oleh.'), line(3000, 5000, 'Hi all, still animating cricket.')]
+		// Both runs heard the turn, but squeezed it before the main line's time.
+		const a = [line(0, 1200, 'Next is Oleh. Hi all, still animating cricket.')]
+		const b = [line(0, 1100, 'Next is Oleh. Hi all, animating cricket.')]
+		expect(voteWords(main, [a, b])).toEqual(main)
+	})
 })
 
 describe('mergeRuns', () => {
