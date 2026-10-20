@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_AI, migrateLegacy, modernizePrompt, presetPrompt } from './config'
+import { DEFAULT_AI, migrateLegacy, modernizePrompt, presetPrompt, withCurrentPresets } from './config'
 import { chunkLines, createClient, fillPrompt, inputBudgetBytes, testConnection } from './client'
 
 const fetchMock = vi.fn()
@@ -32,6 +32,13 @@ describe('migrateLegacy', () => {
 
 	it('modernizes only the placeholder', () => {
 		expect(modernizePrompt('a %s b', 'dictation')).toBe('a {text} b')
+	})
+
+	it('refreshes a saved preset prompt but keeps an edited one', () => {
+		const stale = { ...DEFAULT_AI, tasks: { summary: { ...DEFAULT_AI.tasks.summary, prompt: 'old text {transcript}' }, dictation: { ...DEFAULT_AI.tasks.dictation, preset: 'custom', prompt: 'mine {text}' } } }
+		const ai = withCurrentPresets(stale)
+		expect(ai.tasks.summary.prompt).toBe(presetPrompt('summary'))
+		expect(ai.tasks.dictation.prompt).toBe('mine {text}')
 	})
 })
 

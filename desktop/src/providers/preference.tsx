@@ -12,7 +12,7 @@ import { ModifyState } from '~/lib/types'
 import { supportedLanguages } from '~/lib/i18n'
 import { getLocale, getTextDirection, setLocale } from '~/paraglide/runtime.js'
 import { m } from '~/paraglide/messages.js'
-import { DEFAULT_AI, migrateLegacy, type AiSettings } from '~/lib/ai'
+import { DEFAULT_AI, migrateLegacy, withCurrentPresets, type AiSettings } from '~/lib/ai'
 import { readConfig } from '~/lib/config-store'
 import { message } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
@@ -231,7 +231,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const [spokenLanguages, setSpokenLanguages] = usePersisted<string[]>(CONFIG_KEYS.spokenLanguages, [])
 	const [languageMode, setLanguageMode] = usePersisted<LanguageMode>(CONFIG_KEYS.languageMode, 'list')
 	// The pre-3.2 `summarize.llm` object is read once when `ai` is missing, so nobody loses a key or a prompt.
-	const [ai, setAi] = usePersisted<AiSettings>(
+	const [storedAi, setAi] = usePersisted<AiSettings>(
 		CONFIG_KEYS.ai,
 		useMemo(
 			() =>
@@ -242,6 +242,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 			[],
 		),
 	)
+	const ai = useMemo(() => withCurrentPresets(storedAi), [storedAi])
 	useEffect(() => {
 		// Once, at boot: writes the migrated shape so the file carries it from now on.
 		if (readConfig(CONFIG_KEYS.ai, null) === null && readConfig(CONFIG_KEYS.legacyLlmConfig, null) !== null) setAi(ai)

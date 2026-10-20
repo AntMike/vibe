@@ -79,7 +79,7 @@ export default function ResummarizeDialog({ onSubmit, loading, open: openProp, o
 								setSelected('custom')
 							}}
 							spellCheck={false}
-							className="max-h-[360px] min-h-[160px] font-mono text-[12px] leading-relaxed"
+							className="max-h-[240px] min-h-[96px] font-mono text-[12px] leading-relaxed"
 						/>
 						{!isValid && <p className="text-xs text-destructive">{m.promptMustContainPlaceholder({ placeholder: PLACEHOLDERS.transcript })}</p>}
 					</div>

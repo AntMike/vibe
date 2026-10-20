@@ -77,6 +77,16 @@ export const PLACEHOLDERS = {
 } as const
 
 const RULE = 'Output only the requested content. No introductions, explanations, or commentary.'
+/**
+ * A skeleton instead of a description: shorter, and every recording of a type comes out with the
+ * same sections in the same order. Headings follow the meeting, not the app language.
+ */
+const FILL =
+	'Fill this markdown template from the transcript. Keep its sections, order, heading levels and list styles exactly. Write everything, headings included, in the main language of the transcript. Leave out a section with nothing to put in it.'
+
+function template(skeleton: string) {
+	return `${RULE} ${FILL}\n\n${skeleton}\n\nTranscript:\n"""\n{transcript}\n"""`
+}
 
 export interface Preset {
 	id: string
@@ -89,27 +99,27 @@ export const presets: Preset[] = [
 	{
 		id: 'summary',
 		task: 'summary',
-		prompt: `${RULE}\n\nWrite a concise summary of this transcript in {language} using markdown. Include:\n- A short overview paragraph\n- 3-5 key takeaways as bullet points\n- Action items as a checklist if there are any\n\n"""\n{transcript}\n"""`,
+		prompt: template('## Overview\n<2-3 sentences>\n\n## Key points\n- <3-5 points>\n\n## Action items\n- [ ] <who>: <what>'),
 	},
 	{
 		id: 'meeting-notes',
 		task: 'summary',
-		prompt: `${RULE}\n\nTurn this transcript into structured meeting notes in {language} using markdown. Include:\n- **Topics discussed** as headings\n- Key points under each topic\n- **Decisions** highlighted in bold\n- **Action items** as a checklist at the end\n\n"""\n{transcript}\n"""`,
+		prompt: template('## <topic> (one section per topic)\n- <key point>\n- **Decision:** <decision>\n\n## Action items\n- [ ] <who>: <what>'),
 	},
 	{
 		id: 'tldr',
 		task: 'summary',
-		prompt: `${RULE}\n\nWrite a TL;DR of this transcript in {language} using markdown. Start with a one-paragraph overview, then list the 3-5 most important takeaways as bold bullet points.\n\n"""\n{transcript}\n"""`,
+		prompt: template('**TL;DR:** <one paragraph>\n\n- **<takeaway>** (3-5, most important first)'),
 	},
 	{
 		id: 'translate',
 		task: 'summary',
-		prompt: `${RULE}\n\nTranslate this transcript into {language} (the current app language). Preserve the original structure and formatting. Use markdown headings and paragraphs. Do not wrap the output in fenced code blocks.\n\n"""\n{transcript}\n"""`,
+		prompt: `${RULE}\n\nTranslate this transcript into {language}, keeping its structure. Markdown headings and paragraphs, no code fences.\n\n"""\n{transcript}\n"""`,
 	},
 	{
 		id: 'article',
 		task: 'summary',
-		prompt: `${RULE}\n\nRewrite this transcript as a clean, well-structured article in {language}. Use markdown headings and paragraphs.\n\n"""\n{transcript}\n"""`,
+		prompt: template('# <title>\n<intro paragraph>\n\n## <section>\n<paragraphs>'),
 	},
 	{
 		id: 'punctuation',
@@ -130,6 +140,12 @@ export const presets: Preset[] = [
 
 export function presetPrompt(id: string) {
 	return presets.find((preset) => preset.id === id)?.prompt ?? ''
+}
+
+/** A preset's text comes from here, not the saved copy, so improving a preset reaches everyone who didn't edit theirs. */
+export function withCurrentPresets(ai: AiSettings): AiSettings {
+	const refresh = <T extends AiTask>(task: T): T => ({ ...task, prompt: presetPrompt(task.preset) || task.prompt })
+	return { ...ai, tasks: { summary: refresh(ai.tasks.summary), dictation: refresh(ai.tasks.dictation) } }
 }
 
 export const DEFAULT_AI: AiSettings = {
