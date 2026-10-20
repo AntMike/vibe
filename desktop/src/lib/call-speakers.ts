@@ -83,6 +83,22 @@ export function speakersFromCall(segments: Segment[], turns: CallSpeakerTurn[]):
 }
 
 /**
+ * The names in a transcript that the user typed: those its call's own turns would not have given.
+ * A name the call gave is the call's to give again, so it must not be carried onto a re-transcription,
+ * where the earlier speaker it sat on may have swallowed someone else's turn.
+ */
+export function typedSpeakerNames(segments: Segment[], names: SpeakerNames, turns: CallSpeakerTurn[] | undefined): SpeakerNames {
+	if (!turns?.length) return names
+	const call = speakersFromCall(segments, turns)
+	const typed: SpeakerNames = {}
+	for (const [speaker, name] of Object.entries(names)) {
+		const fromCall = segments.some((segment, i) => segment.speaker === Number(speaker) && call.speakerNames[call.segments[i].speaker!] === name)
+		if (!fromCall) typed[Number(speaker)] = name
+	}
+	return typed
+}
+
+/**
  * Names from an earlier transcript of the same audio, moved onto the speakers of a new one: each new
  * speaker takes the name of the earlier speaker who said most of its lines, when that one had a name.
  */

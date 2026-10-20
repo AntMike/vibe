@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { carrySpeakerNames, parseCallSpeakers, speakersFromCall } from './call-speakers'
+import { carrySpeakerNames, parseCallSpeakers, speakersFromCall, typedSpeakerNames } from './call-speakers'
 
 const segment = (start: number, stop: number, speaker?: number) => ({ start: start * 100, stop: stop * 100, text: 'x', speaker })
 
@@ -51,5 +51,30 @@ describe('carrySpeakerNames', () => {
 	it('leaves a speaker unnamed when it mostly talks over an unnamed earlier one', () => {
 		const before = [segment(0, 3, 0), segment(3, 10, 1)]
 		expect(carrySpeakerNames(before, { 0: 'Alex' }, [segment(0, 10, 0)])).toEqual({})
+	})
+})
+
+describe('typedSpeakerNames', () => {
+	// Serhii (10-14) handed over to Mike (14-30), but an earlier run heard it all as one Mike line.
+	const turns = [
+		{ start: 0, end: 10, name: 'Anton' },
+		{ start: 10, end: 14, name: 'Serhii' },
+		{ start: 14, end: 30, name: 'Mike' },
+	]
+	const before = [segment(0, 10, 0), segment(10, 30, 1), segment(30, 40, 2)]
+
+	it('keeps only the names the call would not have given, so a re-run can name Serhii', () => {
+		const typed = typedSpeakerNames(before, { 0: 'Anton', 1: 'Mike', 2: 'Olena' }, turns)
+		expect(typed).toEqual({ 2: 'Olena' })
+		const after = [segment(0, 10, 0), segment(10, 14, 1), segment(14, 30, 2), segment(30, 40, 3)]
+		expect(carrySpeakerNames(before, typed, after)).toEqual({ 3: 'Olena' })
+	})
+
+	it('keeps every name when the recording has no call turns', () => {
+		expect(typedSpeakerNames(before, { 1: 'Mike' }, undefined)).toEqual({ 1: 'Mike' })
+	})
+
+	it('keeps a name the user typed over the call one', () => {
+		expect(typedSpeakerNames(before, { 0: 'Anton B.' }, turns)).toEqual({ 0: 'Anton B.' })
 	})
 })

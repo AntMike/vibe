@@ -16,7 +16,7 @@ import { autoProjectName } from '~/lib/project-name'
 import { gpuOutOfMemoryBefore, rememberGpuOutOfMemory } from '~/lib/gpu-memory'
 import { fatalRunError, isGpuOutOfMemory, isUserError } from '~/lib/server-errors'
 import type { SlackCall } from '~/lib/slack'
-import { carrySpeakerNames, speakersFromCall, type CallSpeakerTurn } from '~/lib/call-speakers'
+import { carrySpeakerNames, speakersFromCall, typedSpeakerNames, type CallSpeakerTurn } from '~/lib/call-speakers'
 import { mergeRuns } from '~/lib/vote'
 import { correctTerms } from '~/lib/hints'
 import { applyReplacements, fixSpelling } from '~/lib/spelling'
@@ -547,8 +547,11 @@ export function useTranscribeQueue(): TranscribeQueue {
 					// A recorded call knows who was talking when: give each sentence that person.
 					const fromCall = next.callSpeakers && speakersFromCall(heard, next.callSpeakers)
 					const segments = fromCall ? fromCall.segments : heard
-					// Re-transcribed: names the user gave before win over the call's.
-					const carried = next.previous?.speakerNames && carrySpeakerNames(next.previous.segments, next.previous.speakerNames, segments)
+					// Re-transcribed: names the user typed before win over the call's.
+					const typed =
+						next.previous?.speakerNames &&
+						typedSpeakerNames(next.previous.segments, next.previous.speakerNames, next.previous.callSpeakers ?? next.callSpeakers)
+					const carried = typed && carrySpeakerNames(next.previous!.segments, typed, segments)
 					const speakerNames = carried ? { ...fromCall?.speakerNames, ...carried } : fromCall ? fromCall.speakerNames : next.speakerNames
 					patch(next.id, { status: 'done', progress: 100, segments, seconds, speakerNames })
 					completedAny = true
