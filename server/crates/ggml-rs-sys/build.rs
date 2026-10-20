@@ -85,6 +85,9 @@ fn link_platform() {
         }
         Ok("windows") => {
             println!("cargo:rustc-link-lib=static=ggml-vulkan");
+            // The CPU backend reads the processor name from the registry. vibe-server got
+            // advapi32 from its other dependencies; a crate's own test binary did not link.
+            println!("cargo:rustc-link-lib=advapi32");
             if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu") {
                 for lib in ["stdc++", "gomp", "winpthread"] {
                     println!("cargo:rustc-link-lib=static={lib}");
