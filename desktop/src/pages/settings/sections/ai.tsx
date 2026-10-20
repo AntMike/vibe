@@ -96,6 +96,11 @@ export function AiSection({ vm, onOpenPrompt }: { vm: SettingsViewModel; onOpenP
 						<Switch checked={tasks.summary.autoOnFinish} onCheckedChange={(autoOnFinish) => setTask('summary', { autoOnFinish })} />
 					</SettingsRow>
 				)}
+				{tasks.summary.enabled && (
+					<SettingsRow label={m.clickbaitTitles()} description={m.clickbaitTitlesInfo()}>
+						<Switch checked={Boolean(tasks.summary.clickbaitTitle)} onCheckedChange={(clickbaitTitle) => setTask('summary', { clickbaitTitle })} />
+					</SettingsRow>
+				)}
 				<SettingsRow label={m.aiDictationTask()} description={presetLabel(tasks.dictation.preset)}>
 					<Button variant="outline" size="sm" className="rounded-lg" onClick={() => onOpenPrompt('dictation')}>
 						{m.aiEditPrompt()}

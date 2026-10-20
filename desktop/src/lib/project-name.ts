@@ -50,7 +50,7 @@ export function summaryProjectName(name: string, title: string): string | null {
 		.replace(/^title:\s*/i, '')
 		.replace(/[.\s]+$/, '')
 		.trim()
-		.slice(0, 60)
+		.slice(0, 100)
 		.trim()
 	return prefix && label ? `${prefix}${label}` : null
 }

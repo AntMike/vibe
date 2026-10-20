@@ -64,7 +64,8 @@ export interface AiTask {
 export interface AiSettings {
 	connection: AiConnection
 	tasks: {
-		summary: AiTask & { autoOnFinish: boolean }
+		/** `clickbaitTitle` names an auto-named project with a clickbait headline instead of a plain title. */
+		summary: AiTask & { autoOnFinish: boolean; clickbaitTitle?: boolean }
 		dictation: AiTask
 	}
 }

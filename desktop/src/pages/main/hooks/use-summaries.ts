@@ -50,6 +50,10 @@ function joinParts(parts: string[]) {
 	return parts.map((part, index) => `--- Part ${index + 1} of ${parts.length} ---\n${part}`).join('\n\n')
 }
 
+const PLAIN_TITLE = 'Reply with only a 2-6 word title for this summary, in its language.'
+const CLICKBAIT_TITLE =
+	'Reply with only a clickbait Facebook-style headline for this meeting, in its language, under 12 words. Exaggerate what really happened. Example: "SHOCK! Designer reads out the edits, the whole department in tears (ATTENDANCE MANDATORY)"'
+
 function useRecord<T>() {
 	const [record, setRecord] = useState<Record<string, T>>({})
 	const set = useCallback((id: string, value: T) => setRecord((previous) => ({ ...previous, [id]: value })), [])
@@ -129,7 +133,7 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 				// The first summary names an auto-named project; a regenerated one leaves the title alone.
 				if (!job.summary && isAutoProjectName(job.name)) {
 					void client
-						.ask(`Reply with only a 2-6 word title for this summary, in its language.\n\n"""\n${text}\n"""`)
+						.ask(`${task.clickbaitTitle ? CLICKBAIT_TITLE : PLAIN_TITLE}\n\n"""\n${text}\n"""`)
 						.then((title) => {
 							const name = summaryProjectName(job.name, title)
 							if (name) void queue.renameJob(job.id, name, job.name)
@@ -151,6 +155,7 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 		},
 		[
 			task.prompt,
+			task.clickbaitTitle,
 			connection.contextTokens,
 			client,
 			queue,

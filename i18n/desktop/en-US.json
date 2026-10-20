@@ -380,6 +380,8 @@
 	"summarizeLoading": "Summarizing",
 	"autoSummarizeOnFinish": "Summarize new transcripts automatically",
 	"autoSummarizeOnFinishInfo": "Only new transcriptions, never existing projects.",
+	"clickbaitTitles": "Clickbait names",
+	"clickbaitTitlesInfo": "Name new projects with a clickbait headline from their summary.",
 	"summarizeTranscript": "Summarize",
 	"regenerateSummary": "Improve summary",
 	"customizeSummary": "Fine-tune summary…",

@@ -372,6 +372,8 @@
 	"summarizeLoading": "Створення підсумку",
 	"autoSummarizeOnFinish": "Автоматично підсумовувати нові транскрипції",
 	"autoSummarizeOnFinishInfo": "Лише нові транскрипції, ніколи наявні проєкти.",
+	"clickbaitTitles": "Клікбейтні назви",
+	"clickbaitTitlesInfo": "Називати нові проєкти клікбейт-заголовком за їхнім підсумком.",
 	"summarizeTranscript": "Підсумувати",
 	"regenerateSummary": "Покращити підсумок",
 	"customizeSummary": "Донастроїти підсумок…",
