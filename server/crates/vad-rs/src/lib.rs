@@ -90,7 +90,14 @@ impl Vad {
         self.options
     }
 
+    /// The speech, coalesced into context windows of at most `max_chunk_ms`.
     pub fn segments(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>> {
+        let speech = self.speech(samples)?;
+        Ok(coalesce_bounded(&speech, samples.len(), self.options))
+    }
+
+    /// The speech alone, each stretch as heard, with the silence between left out.
+    pub fn speech(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>> {
         if samples.is_empty() {
             return Ok(Vec::new());
         }
@@ -109,7 +116,7 @@ impl Vad {
                 });
             }
         }
-        Ok(coalesce_bounded(&speech, samples.len(), self.options))
+        Ok(speech)
     }
 }
 

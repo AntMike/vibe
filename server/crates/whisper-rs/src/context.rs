@@ -68,7 +68,10 @@ impl Context {
         if let Some(vad_model_path) = options.vad_model_path.as_deref() {
             let mut vad = vad_rs::Vad::new(vad_model_path, vad_rs::Options::stable_timestamps())
                 .map_err(|error| Error::Message(error.to_string()))?;
-            let speech = vad.segments(samples).map_err(|error| Error::Message(error.to_string()))?;
+            // The speech as heard: coalesced segments would span the silences too,
+            // and a window opening on seconds of near-silence is where Whisper
+            // makes up "Дякую за перегляд!" and skips the 30 s after it.
+            let speech = vad.speech(samples).map_err(|error| Error::Message(error.to_string()))?;
             options.windows = speech_windows(&options.windows, &speech, samples.len());
             if options.windows.is_empty() {
                 if let Some(on_progress) = callbacks.on_progress.as_mut() {
