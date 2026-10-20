@@ -114,7 +114,13 @@ const listId = (list: string[]) => list.map(key).join(' ')
 // miss by a word; word timestamps from the engines would fix that.
 export function voteWords(main: Segment[], runs: Segment[][]): Segment[] {
 	const timed = runs.map(timedWords)
+	let reach = -Infinity // the latest stop of the lines before
 	return main.map((segment, index) => {
+		// Two speakers at once: the other runs, decoded without speakers, can't tell whose words
+		// are whose, so lines that overlap another keep the main pass's words.
+		const crosstalk = reach > segment.start || (index + 1 < main.length && main[index + 1].start < segment.stop)
+		reach = Math.max(reach, segment.stop)
+		if (crosstalk) return segment
 		const from = index === 0 ? -Infinity : (main[index - 1].stop + segment.start) / 2
 		const to = index === main.length - 1 ? Infinity : (segment.stop + main[index + 1].start) / 2
 		const line = words(segment.text)

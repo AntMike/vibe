@@ -36,6 +36,10 @@ const MERGE_GAP_SECS: f64 = 0.5;
 /// over someone, rather than an "mm-hm" that stays inside the speaker it interrupts.
 // ponytail: calibration knob; lower it if short replies still land on the other speaker.
 const MIN_NESTED_SECS: f64 = 0.7;
+/// Two speakers' windows overlapping by no more than this (seconds) are a handover, not
+/// crosstalk: the diarizer pads every turn (0.23 s before, 0.08 s after), so back-to-back turns
+/// overlap by about that much.
+const HANDOVER_SECS: f64 = 0.35;
 
 /// Speaker turns as per-speaker windows that cover the whole recording, to transcribe one at
 /// a time. A speaker's turns less than `MERGE_GAP_SECS` apart merge into one window. Windows of
@@ -53,6 +57,22 @@ pub fn speaker_chunks(turns: &[Segment], samples: &[f32]) -> Vec<Segment> {
         match windows.iter_mut().rfind(|window| window.speaker_id == turn.speaker_id) {
             Some(last) if turn.start - last.end < MERGE_GAP_SECS => last.end = last.end.max(turn.end),
             _ => windows.push(turn),
+        }
+    }
+
+    // A handover is cut at its quietest moment, as a gap is, rather than kept as crosstalk.
+    for i in 0..windows.len() {
+        for j in i + 1..windows.len() {
+            let (a, b) = (&windows[i], &windows[j]);
+            if b.start >= a.end {
+                break;
+            }
+            if a.speaker_id == b.speaker_id || b.end <= a.end || a.end - b.start > HANDOVER_SECS {
+                continue;
+            }
+            let cut = quietest_point(samples, b.start, a.end).clamp(b.start, a.end);
+            windows[i].end = cut;
+            windows[j].start = cut;
         }
     }
 
@@ -192,6 +212,13 @@ mod tests {
         let samples = audio(10.0, &[]);
         let chunks = speaker_chunks(&[turn(0.0, 10.0, 0), turn(4.0, 8.0, 1)], &samples);
         assert_eq!(spans(&chunks), vec![(0.0, 10.0, 0), (4.0, 8.0, 1)]);
+    }
+
+    #[test]
+    fn a_handover_is_cut_where_it_is_quiet_not_kept_as_crosstalk() {
+        let samples = audio(9.0, &[(5.1, 5.15)]);
+        let chunks = speaker_chunks(&[turn(0.0, 5.2, 0), turn(5.0, 9.0, 1)], &samples);
+        assert_eq!(spans(&chunks), vec![(0.0, 5.11, 0), (5.11, 9.0, 1)]);
     }
 
     #[test]

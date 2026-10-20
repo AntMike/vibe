@@ -38,6 +38,12 @@ describe('voteWords', () => {
 		expect(voteWords(main, [[line(0, 1000, 'flat cat')]])).toEqual(main)
 	})
 
+	it('leaves lines of two speakers talking at once to the main pass', () => {
+		const main = [line(0, 1000, 'one two three four five', 0), line(400, 800, 'six seven', 1), line(1200, 1500, 'eight nine', 0)]
+		const heard = [line(0, 1000, 'one two six three seven four five'), line(1200, 1500, 'eight nein')]
+		expect(voteWords(main, [heard, heard])).toEqual([...main.slice(0, 2), line(1200, 1500, 'eight nein', 0)])
+	})
+
 	it('lets a run that heard nothing under a line abstain instead of voting it away', () => {
 		const main = [line(0, 1000, 'Next is Oleh.'), line(3000, 5000, 'Hi all, still animating cricket.')]
 		// Both runs heard the turn, but squeezed it before the main line's time.
