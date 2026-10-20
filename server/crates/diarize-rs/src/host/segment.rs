@@ -6,15 +6,16 @@
 
 use ndarray::Array2;
 
-use super::{DiarizationConfig, SpeakerSegment, FRAME_DURATION, NUM_SPEAKERS, SAMPLE_RATE};
+use super::{DiarizationConfig, SpeakerSegment, SAMPLE_RATE};
 
 /// Median filter over time, per speaker, with a shrinking window at the edges.
+/// `preds` is `[T, n_spk]`; the speaker count is the model's.
 pub(crate) fn median_filter(config: &DiarizationConfig, preds: &Array2<f32>) -> Array2<f32> {
     let window = config.median_window;
     let half = window / 2;
     let mut filtered = preds.clone();
 
-    for spk in 0..NUM_SPEAKERS {
+    for spk in 0..preds.shape()[1] {
         for t in 0..preds.shape()[0] {
             let start = t.saturating_sub(half);
             let end = (t + half + 1).min(preds.shape()[0]);
@@ -33,7 +34,9 @@ pub(crate) fn median_filter(config: &DiarizationConfig, preds: &Array2<f32>) -> 
 ///
 /// Hysteresis: a segment opens at `onset` and only closes once the probability
 /// drops below `offset`, so the two thresholds can differ.
-pub(crate) fn binarize(config: &DiarizationConfig, preds: &Array2<f32>) -> Vec<SpeakerSegment> {
+///
+/// `frame_duration` is the model's frame in seconds: 0.08 for v2, 0.01 for v3.
+pub(crate) fn binarize(config: &DiarizationConfig, preds: &Array2<f32>, frame_duration: f32) -> Vec<SpeakerSegment> {
     let mut segments = Vec::new();
     let num_frames = preds.shape()[0];
 
@@ -42,9 +45,11 @@ pub(crate) fn binarize(config: &DiarizationConfig, preds: &Array2<f32>) -> Vec<S
     let pad_offset_samples = (config.pad_offset * SAMPLE_RATE as f32) as u64;
     let min_dur_on_samples = (config.min_duration_on * SAMPLE_RATE as f32) as u64;
     let min_dur_off_samples = (config.min_duration_off * SAMPLE_RATE as f32) as u64;
-    let samples_per_frame = (FRAME_DURATION * SAMPLE_RATE as f32) as u64;
+    // Rounded: 0.01 s is not exact in f32, and truncating 159.99... to 159
+    // would drift every boundary by a sample per frame.
+    let samples_per_frame = (frame_duration * SAMPLE_RATE as f32).round() as u64;
 
-    for spk in 0..NUM_SPEAKERS {
+    for spk in 0..preds.shape()[1] {
         let mut in_seg = false;
         let mut seg_start = 0;
         let mut temp_segments = Vec::new();

@@ -17,6 +17,7 @@
 //! backend.rs  the seam: one chunk in, embeddings + speaker probabilities out
 //! segment.rs  median filter, hysteresis binarisation
 //! config.rs   DiarizationConfig presets and SpeakerSegment
+//! v3.rs       the whole of the above for Sortformer v3 (HF-parity offline path)
 //! ```
 //!
 //! The state machine tracks NeMo's `sortformer_modules.py` closely enough that
@@ -62,11 +63,13 @@ mod cache;
 mod config;
 mod mel;
 mod segment;
+mod v3;
 
 pub use aosc::{SortformerHost, StreamGeometry};
 pub use backend::{Backend, ChunkForward, ChunkRequest};
 pub use config::{DiarizationConfig, SpeakerSegment};
 pub use mel::MelFrontend;
+pub use v3::{V3Geometry, V3Host, V3Model, V3_CHUNK_LEN, V3_FIFO_LEN, V3_RIGHT_CONTEXT, V3_UPDATE_PERIOD};
 
 /// Errors raised by the host pipeline. Backend failures are boxed so that the
 /// seam does not force a concrete error type on whoever implements it.
@@ -81,6 +84,21 @@ pub enum HostError {
 }
 
 pub type HostResult<T> = std::result::Result<T, HostError>;
+
+/// Check the rate and average interleaved channels down to mono.
+pub(crate) fn to_mono(audio: &[f32], sample_rate: u32, channels: u16) -> HostResult<Vec<f32>> {
+    if sample_rate != SAMPLE_RATE as u32 {
+        return Err(HostError::Audio(format!("Expected {SAMPLE_RATE} Hz, got {sample_rate} Hz")));
+    }
+    Ok(if channels > 1 {
+        audio
+            .chunks(channels as usize)
+            .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
+            .collect()
+    } else {
+        audio.to_vec()
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Model constants

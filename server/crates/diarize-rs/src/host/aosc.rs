@@ -25,8 +25,8 @@ use ndarray::{s, Array2, Array3, Axis};
 
 use super::segment::{binarize, median_filter};
 use super::{
-    Backend, DiarizationConfig, HostError, HostResult, MelFrontend, SpeakerSegment, CHUNK_LEN, EMB_DIM, FIFO_LEN, FRAME_DURATION,
-    HOP_LENGTH, NUM_SPEAKERS, N_MELS, RIGHT_CONTEXT, SAMPLE_RATE, SPKCACHE_LEN, SUBSAMPLING,
+    to_mono, Backend, DiarizationConfig, HostResult, MelFrontend, SpeakerSegment, CHUNK_LEN, EMB_DIM, FIFO_LEN, FRAME_DURATION,
+    HOP_LENGTH, NUM_SPEAKERS, N_MELS, RIGHT_CONTEXT, SPKCACHE_LEN, SUBSAMPLING,
 };
 
 /// Streaming geometry, in model frames.
@@ -135,21 +135,11 @@ impl SortformerHost {
     pub fn diarize(
         &mut self,
         backend: &mut dyn Backend,
-        mut audio: Vec<f32>,
+        audio: Vec<f32>,
         sample_rate: u32,
         channels: u16,
     ) -> HostResult<Vec<SpeakerSegment>> {
-        if sample_rate != SAMPLE_RATE as u32 {
-            return Err(HostError::Audio(format!("Expected {SAMPLE_RATE} Hz, got {sample_rate} Hz")));
-        }
-
-        // Downmix to mono.
-        if channels > 1 {
-            audio = audio
-                .chunks(channels as usize)
-                .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
-                .collect();
-        }
+        let audio = to_mono(&audio, sample_rate, channels)?;
 
         // Reset state for new audio.
         self.reset_state();
@@ -165,7 +155,7 @@ impl SortformerHost {
 
         // Binarize to segments and clip to audio length.
         let n_audio_samples = audio.len() as u64;
-        let mut segments = binarize(&self.config, &filtered_preds);
+        let mut segments = binarize(&self.config, &filtered_preds, FRAME_DURATION);
         for seg in &mut segments {
             seg.end = seg.end.min(n_audio_samples);
         }
@@ -188,17 +178,7 @@ impl SortformerHost {
         sample_rate: u32,
         channels: u16,
     ) -> HostResult<(Vec<f32>, usize)> {
-        if sample_rate != SAMPLE_RATE as u32 {
-            return Err(HostError::Audio(format!("Expected {SAMPLE_RATE} Hz, got {sample_rate} Hz")));
-        }
-        let mono: Vec<f32> = if channels > 1 {
-            audio
-                .chunks(channels as usize)
-                .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
-                .collect()
-        } else {
-            audio.to_vec()
-        };
+        let mono = to_mono(audio, sample_rate, channels)?;
 
         self.reset_state();
         let features = self.mel.extract_mel_features(&mono)?;
@@ -234,7 +214,7 @@ impl SortformerHost {
 
         // Clip to audio length in samples.
         let n_audio_samples = audio_16k_mono.len() as u64;
-        let mut segments = binarize(&self.config, &filtered_preds);
+        let mut segments = binarize(&self.config, &filtered_preds, FRAME_DURATION);
         for seg in &mut segments {
             seg.end = seg.end.min(n_audio_samples);
         }
@@ -280,7 +260,7 @@ impl SortformerHost {
             // Binarize with absolute sample offset.
             let sample_offset = self.elapsed_samples as u64;
             let chunk_samples = (self.geom.chunk_len * SUBSAMPLING * HOP_LENGTH) as u64;
-            let mut segments = binarize(&self.config, &filtered_preds);
+            let mut segments = binarize(&self.config, &filtered_preds, FRAME_DURATION);
             for seg in &mut segments {
                 seg.start += sample_offset;
                 seg.end = (seg.end + sample_offset).min(sample_offset + chunk_samples);
@@ -332,7 +312,7 @@ impl SortformerHost {
 
         let sample_offset = self.elapsed_samples as u64;
         let remaining_samples = remaining.len() as u64;
-        let mut segments = binarize(&self.config, &filtered_preds);
+        let mut segments = binarize(&self.config, &filtered_preds, FRAME_DURATION);
         for seg in &mut segments {
             seg.start += sample_offset;
             seg.end = (seg.end + sample_offset).min(sample_offset + remaining_samples);

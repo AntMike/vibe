@@ -8,7 +8,7 @@
 //! `chunk_pre_encode_embs` and `spkcache_fifo_chunk_preds` — can be dropped in
 //! behind this trait without the state machine changing.
 
-use super::{HostError, EMB_DIM, NUM_SPEAKERS};
+use super::HostError;
 
 /// One chunk's worth of inputs to the neural graph.
 ///
@@ -50,20 +50,21 @@ pub struct ChunkForward {
 
 impl ChunkForward {
     /// Cheap sanity check so a layout mistake surfaces at the seam rather than
-    /// as silently permuted speaker labels twenty frames later.
-    pub(crate) fn validate(&self) -> Result<(), HostError> {
-        if self.embeddings.len() != self.embedding_frames * EMB_DIM {
+    /// as silently permuted speaker labels twenty frames later. The widths are
+    /// the model's (`EMB_DIM`/`NUM_SPEAKERS` for v2, 512/8 for v3).
+    pub(crate) fn validate(&self, emb_dim: usize, num_speakers: usize) -> Result<(), HostError> {
+        if self.embeddings.len() != self.embedding_frames * emb_dim {
             return Err(HostError::BackendShape {
                 what: "embedding values",
                 got: self.embeddings.len(),
-                want: self.embedding_frames * EMB_DIM,
+                want: self.embedding_frames * emb_dim,
             });
         }
-        if self.predictions.len() != self.prediction_frames * NUM_SPEAKERS {
+        if self.predictions.len() != self.prediction_frames * num_speakers {
             return Err(HostError::BackendShape {
                 what: "prediction values",
                 got: self.predictions.len(),
-                want: self.prediction_frames * NUM_SPEAKERS,
+                want: self.prediction_frames * num_speakers,
             });
         }
         Ok(())

@@ -8,6 +8,7 @@
 
 use crate::host::{Backend, ChunkForward, ChunkRequest};
 use crate::sf_graph::run_chunk_valid;
+use crate::sf_graph_v3::run_chunk_v3;
 use crate::sf_weights::SortformerWeights;
 
 type BoxErr = Box<dyn std::error::Error + Send + Sync>;
@@ -46,7 +47,8 @@ impl Backend for GgmlBackend {
         // unpadded frame count, ONNX's `chunk_lengths`; the graph needs it so
         // the zero-padded tail of the last window does not become a token every
         // real frame attends to.
-        let out = run_chunk_valid(
+        let run = if self.weights.hparams().is_v3() { run_chunk_v3 } else { run_chunk_valid };
+        let out = run(
             &self.weights,
             request.mel,
             request.mel_frames,

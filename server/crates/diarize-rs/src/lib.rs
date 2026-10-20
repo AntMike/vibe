@@ -4,11 +4,17 @@
 //! checkpoint (see `scripts/README.md`): the `sf_*` modules are the ggml graph,
 //! `host/` is the mel frontend plus the AOSC speaker-cache state machine, and
 //! `sf_backend` is the seam between them. There is no ONNX Runtime here.
+//!
+//! Two model generations load through the same [`Diarizer`]: Sortformer v2
+//! (4 speakers, 80 ms frames; `sf_graph` + `host::aosc`) and v3,
+//! Nemotron-3-Diarization (8 speakers, 10 ms frames; `sf_graph_v3` +
+//! `host::v3`), told apart by the GGUF's `sortformer.version` key.
 
 mod host;
 mod sf_backend;
 mod sf_gguf;
 mod sf_graph;
+mod sf_graph_v3;
 mod sf_ops;
 mod sf_runtime;
 mod sf_transformer;
@@ -20,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use host::{DiarizationConfig, MelFrontend, SortformerHost, StreamGeometry};
+use host::{DiarizationConfig, MelFrontend, SortformerHost, StreamGeometry, V3Geometry, V3Host, V3Model};
 use sf_backend::GgmlBackend;
 use sf_weights::SortformerWeights;
 
@@ -38,8 +44,14 @@ pub enum Error {
 }
 
 pub struct Diarizer {
-    host: SortformerHost,
+    host: Host,
     backend: GgmlBackend,
+}
+
+/// v2 and v3 share the graph seam but not the state machine (see `host::v3`).
+enum Host {
+    V2(SortformerHost),
+    V3(V3Host),
 }
 
 impl Diarizer {
@@ -60,6 +72,46 @@ impl Diarizer {
         let filterbank = weights.mel_filterbank().map_err(|e| init(Box::new(e)))?;
         let mel = MelFrontend::from_trained_filterbank(&filterbank).map_err(|e| init(Box::new(e)))?;
 
+        let hp = weights.hparams();
+        if hp.is_v3() {
+            // The host pools the head's output back to encoder frames by the
+            // subsampling factor; that only inverts the upsampling if they agree.
+            if hp.upsample_factor != hp.enc_subsampling_factor {
+                return Err(init(
+                    format!(
+                        "v3 upsample_factor {} != subsampling_factor {}",
+                        hp.upsample_factor, hp.enc_subsampling_factor
+                    )
+                    .into(),
+                ));
+            }
+            let silence = weights
+                .silence_embedding()
+                .map_err(|e| init(Box::new(e)))?
+                .ok_or_else(|| init("v3 model without learnable_sil_emb".into()))?;
+            let model = V3Model {
+                num_speakers: hp.max_speakers as usize,
+                emb_dim: hp.enc_d_model as usize,
+                subsampling: hp.enc_subsampling_factor as usize,
+                geom: V3Geometry {
+                    chunk_len: host::V3_CHUNK_LEN,
+                    right_context: host::V3_RIGHT_CONTEXT,
+                    fifo_len: host::V3_FIFO_LEN,
+                    update_period: host::V3_UPDATE_PERIOD,
+                    spkcache_len: hp.stream_spkcache_len as usize,
+                },
+                scoring: hp.scoring.clone(),
+                silence,
+            };
+            // HF's extractor windows with a symmetric Hann; v2's ONNX-era
+            // frontend used librosa's periodic one.
+            let host = V3Host::new(mel.with_symmetric_window(), model, DiarizationConfig::callhome());
+            return Ok(Self {
+                host: Host::V3(host),
+                backend: GgmlBackend::new(weights),
+            });
+        }
+
         // Streaming geometry: these are the *inference-time* values, and they
         // are deliberately NOT read from the GGUF's `sortformer.streaming.*`
         // KVs. Those record the training-time configuration (chunk 188 / fifo 0
@@ -78,16 +130,17 @@ impl Diarizer {
         };
 
         Ok(Self {
-            host: SortformerHost::new(mel, geom, DiarizationConfig::callhome()),
+            host: Host::V2(SortformerHost::new(mel, geom, DiarizationConfig::callhome())),
             backend: GgmlBackend::new(weights),
         })
     }
 
     pub fn diarize(&mut self, samples: &[f32], sample_rate: u32, channels: u16) -> Result<Vec<Segment>> {
-        let speaker_segments = self
-            .host
-            .diarize(&mut self.backend, samples.to_vec(), sample_rate, channels)
-            .map_err(|source| Error::Diarize(Box::new(source)))?;
+        let speaker_segments = match &mut self.host {
+            Host::V2(host) => host.diarize(&mut self.backend, samples.to_vec(), sample_rate, channels),
+            Host::V3(host) => host.diarize(&mut self.backend, samples.to_vec(), sample_rate, channels),
+        }
+        .map_err(|source| Error::Diarize(Box::new(source)))?;
 
         Ok(speaker_segments
             .into_iter()
@@ -99,14 +152,17 @@ impl Diarizer {
             .collect())
     }
 
-    /// The raw `[T, 4]` speaker-probability matrix, before median filtering and
+    /// The raw `[T, n_spk]` speaker-probability matrix (`[T, 4]` at 80 ms for
+    /// v2, `[T, 8]` at 10 ms for v3), before median filtering and
     /// binarisation. This is the artifact the `baseline/probs/` oracle records,
     /// so validation compares against it rather than against segments.
     #[doc(hidden)]
     pub fn diarize_raw(&mut self, samples: &[f32], sample_rate: u32, channels: u16) -> Result<(Vec<f32>, usize)> {
-        self.host
-            .diarize_raw(&mut self.backend, samples, sample_rate, channels)
-            .map_err(|source| Error::Diarize(Box::new(source)))
+        match &mut self.host {
+            Host::V2(host) => host.diarize_raw(&mut self.backend, samples, sample_rate, channels),
+            Host::V3(host) => host.diarize_raw(&mut self.backend, samples, sample_rate, channels),
+        }
+        .map_err(|source| Error::Diarize(Box::new(source)))
     }
 }
 

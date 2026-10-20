@@ -15,12 +15,13 @@ use std::path::Path;
 use std::ptr;
 
 use crate::sf_gguf::{
-    read_hparams, resolve_conformer_block, resolve_head, resolve_pre_encode, resolve_transformer_block, string_kv, tensor,
+    read_hparams, resolve_conformer_block, resolve_head, resolve_pre_encode, resolve_rope_block, resolve_transformer_block,
+    resolve_v3, string_kv, tensor,
 };
 use crate::sf_ops::{sys, Tensor};
 
-pub use crate::sf_gguf::SortformerHParams;
-pub(crate) use crate::sf_gguf::{ConformerBlockView, DiarHeadView, PreEncodeView, TransformerBlockView};
+pub use crate::sf_gguf::{Scoring, SortformerHParams};
+pub(crate) use crate::sf_gguf::{ConformerBlockView, DiarHeadView, PreEncodeView, RopeBlockView, TransformerBlockView, V3View};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SfError {
@@ -55,9 +56,12 @@ pub struct SortformerWeights {
     bn_buffer: sys::ggml_backend_buffer_t,
 
     hparams: SortformerHParams,
-    pre_encode: PreEncodeView,
+    /// v2 only: the conv stem. v3 resolves [`V3View`] instead.
+    pre_encode: Option<PreEncodeView>,
     blocks: Vec<ConformerBlockView>,
     tf_blocks: Vec<TransformerBlockView>,
+    rope_blocks: Vec<RopeBlockView>,
+    v3: Option<V3View>,
     head: DiarHeadView,
 }
 
@@ -118,7 +122,32 @@ impl SortformerWeights {
     }
 
     pub(crate) fn pre_encode(&self) -> &PreEncodeView {
-        &self.pre_encode
+        self.pre_encode.as_ref().expect("v2 pre_encode requested from a v3 model")
+    }
+
+    pub(crate) fn rope_blocks(&self) -> &[RopeBlockView] {
+        &self.rope_blocks
+    }
+
+    pub(crate) fn v3(&self) -> Option<&V3View> {
+        self.v3.as_ref()
+    }
+
+    /// v3's trained `learnable_sil_emb` (`[enc_d_model]`), read from the CPU
+    /// mapping like the filterbank. `None` for v2, whose silence embedding is
+    /// a running mean the host accumulates.
+    pub fn silence_embedding(&self) -> SfResult<Option<Vec<f32>>> {
+        if !self.hparams.learnable_silence {
+            return Ok(None);
+        }
+        unsafe {
+            let t = tensor(self.weights, "learnable_sil_emb")?;
+            if (*t).type_ != sys::ggml_type_GGML_TYPE_F32 {
+                return Err(SfError::Ggml("learnable_sil_emb is not F32"));
+            }
+            let n = sys::ggml_nelements(t) as usize;
+            Ok(Some(std::slice::from_raw_parts((*t).data as *const f32, n).to_vec()))
+        }
     }
 
     pub(crate) fn blocks(&self) -> &[ConformerBlockView] {
@@ -178,7 +207,9 @@ impl SortformerWeights {
                 return Err(SfError::UnsupportedArchitecture(architecture));
             }
             let hparams = unsafe { read_hparams(gguf) }?;
-            if hparams.tf_pre_ln {
+            // v3 has no transformer stage (n_layers 0), so its pre_ln flag
+            // describes nothing that is ever built.
+            if hparams.tf_pre_ln && hparams.tf_layers > 0 {
                 return Err(SfError::UnsupportedTransformer);
             }
 
@@ -190,10 +221,18 @@ impl SortformerWeights {
                 None => weights,
             };
 
-            let pre_encode = unsafe { resolve_pre_encode(lookup_ctx) }?;
-            let mut blocks = Vec::with_capacity(hparams.enc_layers as usize);
-            for layer in 0..hparams.enc_layers {
-                blocks.push(unsafe { resolve_conformer_block(lookup_ctx, layer, &hparams) }?);
+            let (mut pre_encode, mut v3) = (None, None);
+            let (mut blocks, mut rope_blocks) = (Vec::new(), Vec::new());
+            if hparams.is_v3() {
+                v3 = Some(unsafe { resolve_v3(lookup_ctx, &hparams) }?);
+                for layer in 0..hparams.enc_layers {
+                    rope_blocks.push(unsafe { resolve_rope_block(lookup_ctx, layer, &hparams) }?);
+                }
+            } else {
+                pre_encode = Some(unsafe { resolve_pre_encode(lookup_ctx) }?);
+                for layer in 0..hparams.enc_layers {
+                    blocks.push(unsafe { resolve_conformer_block(lookup_ctx, layer, &hparams) }?);
+                }
             }
             let mut tf_blocks = Vec::with_capacity(hparams.tf_layers as usize);
             for layer in 0..hparams.tf_layers {
@@ -211,6 +250,8 @@ impl SortformerWeights {
                 pre_encode,
                 blocks,
                 tf_blocks,
+                rope_blocks,
+                v3,
                 head,
             })
         })();

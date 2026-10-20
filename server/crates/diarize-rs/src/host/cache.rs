@@ -63,7 +63,7 @@ impl SortformerHost {
                 fifo_frames: fifo_len,
             })
             .map_err(HostError::Backend)?;
-        forward.validate()?;
+        forward.validate(EMB_DIM, NUM_SPEAKERS)?;
 
         let ChunkForward {
             embeddings,

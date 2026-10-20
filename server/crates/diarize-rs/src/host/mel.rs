@@ -38,6 +38,10 @@ const LOG_STEP: f64 = 0.068_751_777_420_949_12;
 pub struct MelFrontend {
     /// `[n_mels, freq_bins]`.
     basis: Array2<f32>,
+    /// Symmetric (`periodic=False`) Hann window instead of librosa's periodic
+    /// one. HF's Nemotron-3-Diarization extractor, which the v3 reference was
+    /// recorded with, uses `torch.hann_window(400, periodic=False)`.
+    symmetric_window: bool,
 }
 
 impl MelFrontend {
@@ -47,6 +51,7 @@ impl MelFrontend {
     pub fn computed() -> Self {
         Self {
             basis: create_mel_filterbank(N_FFT, N_MELS, SAMPLE_RATE),
+            symmetric_window: false,
         }
     }
 
@@ -64,7 +69,16 @@ impl MelFrontend {
         }
         let basis = Array2::from_shape_vec((N_MELS, FREQ_BINS), data.to_vec())
             .map_err(|e| HostError::Audio(format!("mel filterbank reshape failed: {e}")))?;
-        Ok(Self { basis })
+        Ok(Self {
+            basis,
+            symmetric_window: false,
+        })
+    }
+
+    /// Switch to the symmetric Hann window (see the field docs).
+    pub fn with_symmetric_window(mut self) -> Self {
+        self.symmetric_window = true;
+        self
     }
 
     /// Full frontend: raw 16 kHz mono samples in, log-mel `(1, T, N_MELS)` out.
@@ -77,7 +91,7 @@ impl MelFrontend {
         let preemphasized = apply_preemphasis(audio, PREEMPH);
 
         // 3. STFT -> power spectrum.
-        let spectrogram = stft(&preemphasized)?;
+        let spectrogram = stft(&preemphasized, self.symmetric_window)?;
 
         // 4. Mel filterbank (Slaney-normalised).
         let mel_spec = self.basis.dot(&spectrogram);
@@ -107,23 +121,24 @@ fn apply_preemphasis(audio: &[f32], coef: f32) -> Vec<f32> {
     result
 }
 
-fn hann_window(window_length: usize) -> Vec<f32> {
+fn hann_window(window_length: usize, symmetric: bool) -> Vec<f32> {
     // Librosa uses a periodic window (fftbins=True): divide by N, not N-1.
     // The generic `audio.rs` helper in the upstream crate divides by N-1, which
-    // is the symmetric window — do not substitute it here.
+    // is the symmetric window — only v3 (`symmetric`) wants that.
+    let denom = if symmetric { window_length - 1 } else { window_length };
     (0..window_length)
-        .map(|i| 0.5 - 0.5 * ((2.0 * PI * i as f32) / window_length as f32).cos())
+        .map(|i| 0.5 - 0.5 * ((2.0 * PI * i as f32) / denom as f32).cos())
         .collect()
 }
 
 /// Centered STFT returning the power spectrum, `[freq_bins, num_frames]`.
-fn stft(audio: &[f32]) -> HostResult<Array2<f32>> {
+fn stft(audio: &[f32], symmetric_window: bool) -> HostResult<Array2<f32>> {
     let mut planner = RealFftPlanner::<f32>::new();
     let r2c = planner.plan_fft_forward(N_FFT);
 
     // Hann window of length win_length, then zero-padded to n_fft (centered).
     // This is exactly what librosa does: util.pad_center(fft_window, size=n_fft).
-    let hann = hann_window(WIN_LENGTH);
+    let hann = hann_window(WIN_LENGTH, symmetric_window);
     let win_offset = (N_FFT - WIN_LENGTH) / 2;
     let mut fft_window = vec![0.0f32; N_FFT];
     fft_window[win_offset..(WIN_LENGTH + win_offset)].copy_from_slice(&hann[..WIN_LENGTH]);
@@ -235,7 +250,7 @@ mod tests {
     fn stft_concentrates_power_at_expected_bin() {
         // 1kHz sine at 16kHz sample rate, 1 second
         let audio = sine_wave(1000.0, SAMPLE_RATE, SAMPLE_RATE);
-        let spec = stft(&audio).unwrap();
+        let spec = stft(&audio, false).unwrap();
 
         // Expected bin: 1000 * N_FFT / SAMPLE_RATE = 1000 * 512 / 16000 = 32
         let expected_bin = 32;
@@ -267,7 +282,7 @@ mod tests {
     #[test]
     fn stft_output_shape_is_correct() {
         let audio = vec![0.0f32; SAMPLE_RATE]; // 1 second
-        let spec = stft(&audio).unwrap();
+        let spec = stft(&audio, false).unwrap();
 
         assert_eq!(spec.shape()[0], FREQ_BINS);
         assert!(spec.shape()[1] > 0);

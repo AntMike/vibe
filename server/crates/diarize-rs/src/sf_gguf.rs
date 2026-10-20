@@ -15,10 +15,17 @@
 //! head.first_hidden_to_hidden.* head hidden layer
 //! head.single_hidden_to_spks.* head output (192 -> 4)
 //! ```
+//!
+//! v3 (`sortformer.version = "v3"`) replaces the stem and the conformer and
+//! transformer stacks with `encoder.pre_encode.proj` (feature stacking),
+//! `encoder.{embed,final}_norm`, `encoder.layers.{i}.{norm1,attn.w_qkv,
+//! attn.out_proj,norm2,ffn.net.0,ffn.net.3}` and `subpixel_upsample`, plus
+//! `learnable_sil_emb`; the head and `encoder_proj` are shared.
 
 use std::ffi::{CStr, CString};
 use std::ptr;
 
+use crate::host::{CHUNK_LEN, FIFO_LEN, RIGHT_CONTEXT, SPKCACHE_LEN};
 use crate::sf_ops::{sys, Tensor};
 use crate::sf_weights::{SfError, SfResult};
 
@@ -56,6 +63,90 @@ pub struct SortformerHParams {
     pub stream_spkcache_len: i64,
     pub stream_fifo_len: i64,
     pub stream_spkcache_update_period: i64,
+    pub stream_right_context: i64,
+
+    /// `sortformer.version`: `"v2"` (conformer + transformer, 80 ms frames)
+    /// or `"v3"` (Nemotron-3-Diarization: RoPE transformer, 10 ms frames).
+    /// Files written before v3 existed carry no such key and are v2.
+    pub version: String,
+    /// Head upsampling back to the mel frame rate; 1 for v2, 8 for v3.
+    pub upsample_factor: i64,
+    /// v3 fills disabled cache slots with a trained `learnable_sil_emb`
+    /// instead of v2's running mean of silent frames.
+    pub learnable_silence: bool,
+    pub enc_rope_base: f32,
+    pub scoring: Scoring,
+}
+
+impl SortformerHParams {
+    pub fn is_v3(&self) -> bool {
+        self.version == "v3"
+    }
+}
+
+/// AOSC cache-compression parameters (`sortformer.scoring.*`). Absent keys
+/// fall back to the v2 values the host was ported with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scoring {
+    pub sil_frames_per_spk: usize,
+    pub pred_score_threshold: f32,
+    /// Added to the scores of the frames just popped from the FIFO, so that on
+    /// a tie the cache prefers recent material. v2's host never applied it.
+    pub scores_boost_latest: f32,
+    pub sil_threshold: f32,
+    pub strong_boost_rate: f32,
+    pub weak_boost_rate: f32,
+    pub min_pos_scores_rate: f32,
+}
+
+impl Default for Scoring {
+    fn default() -> Self {
+        use crate::host::{
+            MIN_POS_SCORES_RATE, PRED_SCORE_THRESHOLD, SIL_THRESHOLD, SPKCACHE_SIL_FRAMES_PER_SPK, STRONG_BOOST_RATE,
+            WEAK_BOOST_RATE,
+        };
+        Self {
+            sil_frames_per_spk: SPKCACHE_SIL_FRAMES_PER_SPK,
+            pred_score_threshold: PRED_SCORE_THRESHOLD,
+            scores_boost_latest: 0.0,
+            sil_threshold: SIL_THRESHOLD,
+            strong_boost_rate: STRONG_BOOST_RATE,
+            weak_boost_rate: WEAK_BOOST_RATE,
+            min_pos_scores_rate: MIN_POS_SCORES_RATE,
+        }
+    }
+}
+
+/// One v3 encoder block: pre-LN self-attention with RoPE and a fused,
+/// bias-free QKV projection, then a pre-LN GELU feed-forward.
+#[derive(Clone, Copy)]
+pub(crate) struct RopeBlockView {
+    pub norm1_w: Tensor,
+    pub norm1_b: Tensor,
+    /// `[d, 3d]`: q, k, v stacked along the output axis in that order.
+    pub qkv_w: Tensor,
+    pub out_w: Tensor,
+    pub out_b: Tensor,
+    pub norm2_w: Tensor,
+    pub norm2_b: Tensor,
+    pub ff_in_w: Tensor,
+    pub ff_in_b: Tensor,
+    pub ff_out_w: Tensor,
+    pub ff_out_b: Tensor,
+}
+
+/// The v3 tensors outside the encoder blocks (the head is shared with v2).
+#[derive(Clone, Copy)]
+pub(crate) struct V3View {
+    /// Feature stacking: `[n_mels * 8, d]`, no bias.
+    pub stack_proj_w: Tensor,
+    pub embed_norm_w: Tensor,
+    pub embed_norm_b: Tensor,
+    pub final_norm_w: Tensor,
+    pub final_norm_b: Tensor,
+    /// Sub-pixel conv, ggml `[3, tf_d, tf_d * upsample]`.
+    pub upsample_w: Tensor,
+    pub upsample_b: Tensor,
 }
 
 /// Borrowed pointers to one FastConformer block's tensors. Mirrors
@@ -291,6 +382,41 @@ pub(crate) unsafe fn resolve_transformer_block(
     })
 }
 
+pub(crate) unsafe fn resolve_rope_block(ctx: *mut sys::ggml_context, layer: i64, hp: &SortformerHParams) -> SfResult<RopeBlockView> {
+    let d = hp.enc_d_model;
+    let dff = hp.enc_d_ff;
+    let name = |suffix: &str| format!("encoder.layers.{layer}.{suffix}");
+    let get = |suffix: &str| tensor(ctx, &name(suffix));
+    let get2 = |suffix: &str, ne0: i64, ne1: i64| checked(ctx, &name(suffix), ne0, ne1);
+    Ok(RopeBlockView {
+        norm1_w: get2("norm1.weight", d, -1)?,
+        norm1_b: get("norm1.bias")?,
+        qkv_w: get2("attn.w_qkv.weight", d, 3 * d)?,
+        out_w: get2("attn.out_proj.weight", d, d)?,
+        out_b: get("attn.out_proj.bias")?,
+        norm2_w: get2("norm2.weight", d, -1)?,
+        norm2_b: get("norm2.bias")?,
+        ff_in_w: get2("ffn.net.0.weight", d, dff)?,
+        ff_in_b: get("ffn.net.0.bias")?,
+        ff_out_w: get2("ffn.net.3.weight", dff, d)?,
+        ff_out_b: get("ffn.net.3.bias")?,
+    })
+}
+
+pub(crate) unsafe fn resolve_v3(ctx: *mut sys::ggml_context, hp: &SortformerHParams) -> SfResult<V3View> {
+    let d = hp.enc_d_model;
+    let tf = hp.tf_d_model;
+    Ok(V3View {
+        stack_proj_w: checked(ctx, "encoder.pre_encode.proj.weight", hp.fe_num_mels * hp.enc_subsampling_factor, d)?,
+        embed_norm_w: checked(ctx, "encoder.embed_norm.weight", d, -1)?,
+        embed_norm_b: checked(ctx, "encoder.embed_norm.bias", d, -1)?,
+        final_norm_w: checked(ctx, "encoder.final_norm.weight", d, -1)?,
+        final_norm_b: checked(ctx, "encoder.final_norm.bias", d, -1)?,
+        upsample_w: checked(ctx, "subpixel_upsample.weight", 3, tf)?,
+        upsample_b: checked(ctx, "subpixel_upsample.bias", tf * hp.upsample_factor, -1)?,
+    })
+}
+
 pub(crate) unsafe fn resolve_head(ctx: *mut sys::ggml_context, hp: &SortformerHParams) -> SfResult<DiarHeadView> {
     let d = hp.tf_d_model;
     let spk = hp.max_speakers;
@@ -320,6 +446,22 @@ unsafe fn u32_kv(ctx: *const sys::gguf_context, name: &str) -> SfResult<i64> {
 unsafe fn f32_kv(ctx: *const sys::gguf_context, name: &str) -> SfResult<f32> {
     let id = find_key(ctx, name).ok_or_else(|| SfError::MissingMetadata(name.to_string()))?;
     Ok(sys::gguf_get_val_f32(ctx, id))
+}
+
+unsafe fn opt_u32(ctx: *const sys::gguf_context, name: &str) -> Option<i64> {
+    find_key(ctx, name).map(|id| sys::gguf_get_val_u32(ctx, id) as i64)
+}
+
+unsafe fn opt_f32(ctx: *const sys::gguf_context, name: &str) -> Option<f32> {
+    find_key(ctx, name).map(|id| sys::gguf_get_val_f32(ctx, id))
+}
+
+unsafe fn opt_bool(ctx: *const sys::gguf_context, name: &str) -> Option<bool> {
+    find_key(ctx, name).map(|id| sys::gguf_get_val_bool(ctx, id))
+}
+
+unsafe fn opt_string(ctx: *const sys::gguf_context, name: &str) -> Option<String> {
+    find_key(ctx, name).and_then(|_| string_kv(ctx, name).ok())
 }
 
 pub(crate) unsafe fn string_kv(ctx: *const sys::gguf_context, name: &str) -> SfResult<String> {
@@ -373,11 +515,127 @@ pub(crate) unsafe fn read_hparams(ctx: *const sys::gguf_context) -> SfResult<Sor
         fe_win_length: win_length,
         fe_hop_length: hop_length,
 
-        // Training-time provenance only (188/0/188). NVIDIA's own runtime ignores
-        // these and picks a geometry preset; so do we — see `sf_graph`.
-        stream_chunk_len: u32_kv(ctx, "sortformer.streaming.chunk_len")?,
-        stream_spkcache_len: u32_kv(ctx, "sortformer.streaming.spkcache_len")?,
-        stream_fifo_len: u32_kv(ctx, "sortformer.streaming.fifo_len")?,
-        stream_spkcache_update_period: u32_kv(ctx, "sortformer.streaming.spkcache_update_period")?,
+        // Training-time provenance only (188/0/188 for v2, 264/0/264 for v3).
+        // Neither runtime streams with these; the host picks its own inference
+        // geometry (see `lib.rs` and `host::v3`). Absent keys read as the v2
+        // inference geometry the host was ported with.
+        stream_chunk_len: opt_u32(ctx, "sortformer.streaming.chunk_len").unwrap_or(CHUNK_LEN as i64),
+        stream_spkcache_len: opt_u32(ctx, "sortformer.streaming.spkcache_len").unwrap_or(SPKCACHE_LEN as i64),
+        stream_fifo_len: opt_u32(ctx, "sortformer.streaming.fifo_len").unwrap_or(FIFO_LEN as i64),
+        stream_spkcache_update_period: opt_u32(ctx, "sortformer.streaming.spkcache_update_period")
+            .unwrap_or(CHUNK_LEN as i64),
+        stream_right_context: opt_u32(ctx, "sortformer.streaming.chunk_right_context").unwrap_or(RIGHT_CONTEXT as i64),
+
+        version: opt_string(ctx, "sortformer.version").unwrap_or_else(|| "v2".to_owned()),
+        upsample_factor: opt_u32(ctx, "sortformer.upsample_factor").unwrap_or(1),
+        learnable_silence: opt_bool(ctx, "sortformer.learnable_silence").unwrap_or(false),
+        enc_rope_base: opt_f32(ctx, "sortformer.encoder.rope_base").unwrap_or(10000.0),
+        scoring: {
+            let d = Scoring::default();
+            let f = |key: &str, fallback: f32| opt_f32(ctx, &format!("sortformer.scoring.{key}")).unwrap_or(fallback);
+            Scoring {
+                sil_frames_per_spk: opt_u32(ctx, "sortformer.scoring.spkcache_sil_frames_per_spk")
+                    .map_or(d.sil_frames_per_spk, |v| v as usize),
+                pred_score_threshold: f("pred_score_threshold", d.pred_score_threshold),
+                scores_boost_latest: f("scores_boost_latest", d.scores_boost_latest),
+                sil_threshold: f("sil_threshold", d.sil_threshold),
+                strong_boost_rate: f("strong_boost_rate", d.strong_boost_rate),
+                weak_boost_rate: f("weak_boost_rate", d.weak_boost_rate),
+                min_pos_scores_rate: f("min_pos_scores_rate", d.min_pos_scores_rate),
+            }
+        },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    unsafe fn set_u32(ctx: *mut sys::gguf_context, key: &str, value: u32) {
+        let key = CString::new(key).unwrap();
+        sys::gguf_set_val_u32(ctx, key.as_ptr(), value);
+    }
+
+    unsafe fn set_f32(ctx: *mut sys::gguf_context, key: &str, value: f32) {
+        let key = CString::new(key).unwrap();
+        sys::gguf_set_val_f32(ctx, key.as_ptr(), value);
+    }
+
+    unsafe fn set_str(ctx: *mut sys::gguf_context, key: &str, value: &str) {
+        let (key, value) = (CString::new(key).unwrap(), CString::new(value).unwrap());
+        sys::gguf_set_val_str(ctx, key.as_ptr(), value.as_ptr());
+    }
+
+    /// Only the keys `read_hparams` cannot do without, with v2's values.
+    unsafe fn mandatory_keys() -> *mut sys::gguf_context {
+        let ctx = sys::gguf_init_empty();
+        set_str(ctx, "general.architecture", "sortformer");
+        for (key, value) in [
+            ("sortformer.preprocessor.sample_rate", 16000),
+            ("sortformer.encoder.subsampling_factor", 8),
+            ("sortformer.num_speakers", 4),
+            ("sortformer.encoder.n_layers", 17),
+            ("sortformer.encoder.d_model", 512),
+            ("sortformer.encoder.n_heads", 8),
+            ("sortformer.encoder.d_ff", 2048),
+            ("sortformer.encoder.conv_kernel_size", 9),
+            ("sortformer.encoder.subsampling_conv_channels", 256),
+            ("sortformer.encoder.feat_in", 128),
+            ("sortformer.transformer.n_layers", 18),
+            ("sortformer.transformer.hidden_size", 192),
+            ("sortformer.transformer.n_heads", 8),
+            ("sortformer.transformer.inner_size", 768),
+            ("sortformer.preprocessor.features", 128),
+            ("sortformer.preprocessor.n_fft", 512),
+        ] {
+            set_u32(ctx, key, value);
+        }
+        set_f32(ctx, "sortformer.preprocessor.window_size", 0.025);
+        set_f32(ctx, "sortformer.preprocessor.window_stride", 0.01);
+        set_str(ctx, "sortformer.encoder.conv_norm", "batch_norm");
+        ctx
+    }
+
+    #[test]
+    fn absent_optional_keys_read_as_v2_defaults() {
+        unsafe {
+            let ctx = mandatory_keys();
+            let hp = read_hparams(ctx).unwrap();
+            sys::gguf_free(ctx);
+            assert_eq!(hp.version, "v2");
+            assert!(!hp.is_v3());
+            assert_eq!(hp.upsample_factor, 1);
+            assert!(!hp.learnable_silence);
+            assert_eq!(hp.scoring, Scoring::default());
+            assert_eq!(hp.stream_chunk_len, CHUNK_LEN as i64);
+            assert_eq!(hp.stream_spkcache_len, SPKCACHE_LEN as i64);
+            assert_eq!(hp.stream_fifo_len, FIFO_LEN as i64);
+            assert_eq!(hp.stream_right_context, RIGHT_CONTEXT as i64);
+            assert_eq!((hp.fe_win_length, hp.fe_hop_length, hp.frame_hop), (400, 160, 1280));
+        }
+    }
+
+    #[test]
+    fn v3_keys_are_read_from_the_file() {
+        unsafe {
+            let ctx = mandatory_keys();
+            set_str(ctx, "sortformer.version", "v3");
+            set_u32(ctx, "sortformer.upsample_factor", 8);
+            set_f32(ctx, "sortformer.scoring.scores_boost_latest", 0.05);
+            set_u32(ctx, "sortformer.scoring.spkcache_sil_frames_per_spk", 1);
+            set_f32(ctx, "sortformer.encoder.rope_base", 5000.0);
+            set_u32(ctx, "sortformer.streaming.spkcache_len", 264);
+            let hp = read_hparams(ctx).unwrap();
+            sys::gguf_free(ctx);
+            assert!(hp.is_v3());
+            assert_eq!(hp.upsample_factor, 8);
+            assert_eq!(hp.scoring.scores_boost_latest, 0.05);
+            assert_eq!(hp.scoring.sil_frames_per_spk, 1);
+            // Keys left out still fall back individually.
+            assert_eq!(hp.scoring.pred_score_threshold, Scoring::default().pred_score_threshold);
+            assert_eq!(hp.enc_rope_base, 5000.0);
+            assert_eq!(hp.stream_spkcache_len, 264);
+            assert_eq!(hp.stream_chunk_len, CHUNK_LEN as i64);
+        }
+    }
 }
