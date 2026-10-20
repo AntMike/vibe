@@ -4,6 +4,7 @@ import { m } from '~/paraglide/messages.js'
 import Layout, { SIDEBAR_STORAGE_KEY, TOGGLE_SIDEBAR_EVENT } from '~/components/layout'
 import IdleHero from './components/idle-hero'
 import PlayerBar from './components/player-bar'
+import ActivityStatus from './components/activity-status'
 import RecentsSidebar from './components/recents-sidebar'
 import SessionView from './components/session-view'
 import { SpeakerLanguageDialog } from './components/speaker-language-dialog'
@@ -40,12 +41,12 @@ function useSidebarVisible() {
 }
 
 function MainContent() {
-	const { mode, dragging } = useSession()
+	const { mode, dragging, recorderInFront } = useSession()
 
 	return (
 		<div className="relative flex h-full min-h-0 w-full min-w-0 flex-col">
 			<AnimatePresence mode="wait" initial={false}>
-				{mode === 'idle' ? (
+				{mode === 'idle' || recorderInFront ? (
 					<motion.div
 						key="idle"
 						exit={{ opacity: 0, y: -8 }}
@@ -120,6 +121,7 @@ function Shell() {
 	return (
 		<Layout
 			bottomBar={<PlayerSlot />}
+			headerEnd={<ActivityStatus />}
 			sidebar={
 				<AnimatePresence initial={false}>
 					{showSidebar && (

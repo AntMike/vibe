@@ -56,9 +56,11 @@ interface LayoutProps {
 	sidebar?: ReactNode
 	/** Full-width bar docked at the very bottom of the window (player). */
 	bottomBar?: ReactNode
+	/** Status shown at the end of the titlebar (ongoing recording, transcription). */
+	headerEnd?: ReactNode
 }
 
-export default function Layout({ children, sidebar, bottomBar }: LayoutProps) {
+export default function Layout({ children, sidebar, bottomBar, headerEnd }: LayoutProps) {
 	const [settingsVisible, setSettingsVisible] = useState(false)
 	const [settingsScrollTo, setSettingsScrollTo] = useState<string | undefined>(undefined)
 	// Only the main page renders a Recents sidebar, so only it gets the toggle.
@@ -101,7 +103,9 @@ export default function Layout({ children, sidebar, bottomBar }: LayoutProps) {
 			<div className="flex min-h-0 flex-1" style={{ direction: 'ltr' }}>
 				{sidebar}
 				<div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" style={{ direction: getTextDirection() }}>
-					<header data-tauri-drag-region className="flex h-14 shrink-0 items-center justify-end gap-4 pe-4"></header>
+					<header data-tauri-drag-region className="flex h-14 shrink-0 items-center justify-end gap-2 pe-4">
+						{headerEnd}
+					</header>
 					{/*
 					 * The main page owns its scrolling (transcript pane, file rail), so the shell must not
 					 * scroll too — otherwise the rails drift away under the reader. Other pages scroll here.

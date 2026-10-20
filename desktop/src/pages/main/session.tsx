@@ -44,6 +44,12 @@ export interface Session {
 	setPanel: (panel: IdlePanel) => void
 	recording: Recording
 	recordElapsed: number
+	/** The live recorder is on screen over a session that is not idle. */
+	recorderInFront: boolean
+	/** Bring the live recorder up without dropping the session behind it. */
+	showRecorder: () => void
+	/** Back to the session, on the file being transcribed. */
+	showTranscription: () => void
 	link: AudioDownload
 	collectingFolder: boolean
 	browse: () => Promise<void>
@@ -85,6 +91,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	const [panel, setPanel] = useState<IdlePanel>('none')
 	const [collectingFolder, setCollectingFolder] = useState(false)
 	const [recordElapsed, setRecordElapsed] = useState(0)
+	const [recorderOpen, setRecorderOpen] = useState(false)
 
 	const enqueueRef = useRef(queue.enqueue)
 	useEffect(() => {
@@ -153,6 +160,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		[manualRecording, recordingShortcut.isShortcutRecording],
 	)
 	const link = useAudioDownload(transcribeDownloads)
+	const recorderInFront = recorderOpen && recording.isRecording && panel === 'record'
+
+	// Opening another project, or the recording ending, hands the screen back to the session.
+	useEffect(() => setRecorderOpen(false), [queue.selectedId, recording.isRecording])
+
+	const showRecorder = useCallback(() => {
+		setPanel('record')
+		setRecorderOpen(true)
+	}, [])
+
+	const showTranscription = useCallback(() => {
+		setRecorderOpen(false)
+		if (queue.activeId) queue.selectJob(queue.activeId)
+	}, [queue])
 
 	useEffect(() => {
 		recordingShortcut.setNormalRecordingActive(recording.isRecording)
@@ -355,12 +376,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			setPanel,
 			recording,
 			recordElapsed,
+			recorderInFront,
+			showRecorder,
+			showTranscription,
 			link,
 			collectingFolder,
 			browse,
 			startNew,
 		}),
-		[mode, queue, summaries, slackHuddle, preference, dragging, panel, recording, recordElapsed, link, collectingFolder, browse, startNew],
+		[mode, queue, summaries, slackHuddle, preference, dragging, panel, recording, recordElapsed, recorderInFront, showRecorder, showTranscription, link, collectingFolder, browse, startNew],
 	)
 
 	return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

@@ -14,7 +14,7 @@ import { parseMediaLinks } from '~/lib/ytdlp'
 import { useSession, type IdlePanel } from '../session'
 import QuietRow from './quiet-row'
 
-function formatElapsed(seconds: number) {
+export function formatElapsed(seconds: number) {
 	const minutes = Math.floor(seconds / 60)
 	return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 }
