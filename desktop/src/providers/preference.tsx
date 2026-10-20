@@ -122,6 +122,9 @@ export interface Preference {
 	/** Whether a quick pass first finds the languages each recording contains, among `spokenLanguages` with `detect-list`. */
 	languageMode: LanguageMode
 	setLanguageMode: ModifyState<LanguageMode>
+	/** Language picked for a person, by their speaker name: their lines are decoded in it. */
+	speakerLanguages: Record<string, string>
+	setSpeakerLanguages: ModifyState<Record<string, string>>
 
 	gpuDevice: number | null
 	setGpuDevice: ModifyState<number | null>
@@ -230,6 +233,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const [extraPasses, setExtraPasses] = usePersisted<string[]>(CONFIG_KEYS.extraPasses, [])
 	const [spokenLanguages, setSpokenLanguages] = usePersisted<string[]>(CONFIG_KEYS.spokenLanguages, [])
 	const [languageMode, setLanguageMode] = usePersisted<LanguageMode>(CONFIG_KEYS.languageMode, 'list')
+	const [speakerLanguages, setSpeakerLanguages] = usePersisted<Record<string, string>>(CONFIG_KEYS.speakerLanguages, {})
 	// The pre-3.2 `summarize.llm` object is read once when `ai` is missing, so nobody loses a key or a prompt.
 	const [storedAi, setAi] = usePersisted<AiSettings>(
 		CONFIG_KEYS.ai,
@@ -435,6 +439,8 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setSpokenLanguages,
 		languageMode,
 		setLanguageMode,
+		speakerLanguages,
+		setSpeakerLanguages,
 		advancedTranscribeOptions,
 		setAdvancedTranscribeOptions,
 		recentLanguages,

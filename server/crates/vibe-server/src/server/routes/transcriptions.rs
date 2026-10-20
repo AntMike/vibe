@@ -13,7 +13,9 @@ use crate::server::{error, AppState, MAX_UPLOAD_SIZE};
 /// default 1) decodes Parakeet audio that many times, later runs on slightly
 /// shifted or sped-up copies, and keeps the most confident words where the runs
 /// disagree; other engines ignore it. `hotwords` (comma-separated) are terms
-/// Parakeet and Whisper lean toward spelling out.
+/// Parakeet and Whisper lean toward spelling out. `windows` (`start-end` pairs
+/// in seconds, comma-separated, e.g. `1.5-4,10-12.25`) decodes only those
+/// stretches, in place of diarized speaker turns.
 #[utoipa::path(
     post,
     path = "/v1/audio/transcriptions",

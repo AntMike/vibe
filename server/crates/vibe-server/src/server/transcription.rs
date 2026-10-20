@@ -24,9 +24,10 @@ pub(super) async fn transcribe(
     request: TranscriptionRequest,
 ) -> Result<Response, Response> {
     let TranscriptionRequest { file, form } = request;
-    let (diarize_model, enhance_audio, stable_timestamps, vad_model_path, stream, response_format) = {
+    let (windows, diarize_model, enhance_audio, stable_timestamps, vad_model_path, stream, response_format) = {
         let values = FormValues::new(&form);
         (
+            values.string("windows"),
             values.string("diarize_model"),
             values.bool("enhance_audio"),
             values.bool("stable_timestamps"),
@@ -84,10 +85,28 @@ pub(super) async fn transcribe(
             &format!("unknown language in 'languages': {unknown}"),
         ));
     }
+    // Asked-for stretches: only those are decoded, the way one speaker's lines
+    // are redone in another language. They stand in for the speaker turns.
+    if let Some(windows) = windows {
+        if !ctx.transcribes_windows(&opts) {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "'windows' is not supported by this engine or with 'stable_timestamps'",
+            ));
+        }
+        opts.windows = parse_windows(&windows, samples.len()).ok_or_else(|| {
+            error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "'windows' must be comma-separated start-end pairs in seconds",
+            )
+        })?;
+        diar_segments.clear();
     // Each speaker turn is transcribed on its own, so a line never spans two
     // speakers and each turn is decoded in its own language. Speakers are then
     // matched against the chunks decoded rather than the raw turns.
-    if ctx.transcribes_windows(&opts) && !diar_segments.is_empty() {
+    } else if ctx.transcribes_windows(&opts) && !diar_segments.is_empty() {
         diar_segments = diarization::speaker_chunks(&diar_segments, &samples);
         opts.windows = diar_segments.iter().map(window).collect();
     }
@@ -136,6 +155,7 @@ pub(super) fn build_options(
         windows: Vec::new(),
         draft_runs: values.i32("draft_runs"),
         hotwords: comma_list(values.string("hotwords")),
+        raw_languages: values.bool("raw_languages"),
     }
 }
 
@@ -152,6 +172,25 @@ fn comma_list(value: Option<String>) -> Vec<String> {
 }
 
 const SAMPLE_RATE: f64 = 16_000.0;
+
+/// `"1.5-4,10-12.25"` (seconds) as windows of one group, clipped to the audio;
+/// None when a pair does not parse or runs backwards.
+fn parse_windows(value: &str, len: usize) -> Option<Vec<Window>> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (start, end) = pair.split_once('-')?;
+            let (start, end): (f64, f64) = (start.trim().parse().ok()?, end.trim().parse().ok()?);
+            (start >= 0.0 && end > start).then(|| Window {
+                start_sample: ((start * SAMPLE_RATE) as usize).min(len),
+                end_sample: ((end * SAMPLE_RATE).ceil() as usize).min(len),
+                group: 0,
+            })
+        })
+        .collect()
+}
 
 fn window(chunk: &diarization::Segment) -> Window {
     Window {
@@ -180,5 +219,23 @@ fn format_response(
         )
             .into_response(),
         _ => Json(TextResponse { text: result.text() }).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_parse_as_seconds_and_clip_to_the_audio() {
+        let spans = |windows: Vec<Window>| windows.iter().map(|w| (w.start_sample, w.end_sample)).collect::<Vec<_>>();
+        let len = 20 * 16_000;
+        assert_eq!(
+            parse_windows("1.5-4, 10-25", len).map(spans),
+            Some(vec![(24_000, 64_000), (160_000, len)])
+        );
+        assert!(parse_windows("4-1", len).is_none());
+        assert!(parse_windows("1.5", len).is_none());
+        assert!(parse_windows("a-b", len).is_none());
     }
 }

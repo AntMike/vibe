@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { cliCommand, DEFAULT_AI } from './ai'
-import { buildPrompt, DEFAULT_HINTS, parseGlossary, parseReplacements, rareWords, refineDraft } from './hints'
+import { DEFAULT_HINTS, parseGlossary, parseReplacements, rareWords, refineDraft } from './hints'
 
 const LEAN = '--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence'
 
@@ -37,25 +37,6 @@ describe('parseGlossary', () => {
 		expect(parseGlossary('Oleksii, Kubernetes, Vibe.')).toEqual(['Oleksii', 'Kubernetes', 'Vibe'])
 		expect(parseGlossary('Glossary:\n- Oleksii\n- Kubernetes\n2. Vibe')).toEqual(['Oleksii', 'Kubernetes', 'Vibe'])
 		expect(parseGlossary('```\nOleksii; Kubernetes\n```')).toEqual(['Oleksii', 'Kubernetes'])
-	})
-})
-
-describe('buildPrompt', () => {
-	it('puts the glossary after the user prompt, deduplicated', () => {
-		expect(buildPrompt(['Oleksii', 'oleksii', ' Vibe '], 'A call about releases.')).toBe('A call about releases. Oleksii, Vibe')
-	})
-
-	it('drops the last terms once the prompt is full', () => {
-		const terms = Array.from({ length: 100 }, (_, i) => `Term${i}`)
-		const prompt = buildPrompt(terms)
-		expect(prompt.length).toBeLessThanOrEqual(400)
-		expect(prompt.startsWith('Term0, Term1,')).toBe(true)
-		expect(prompt).not.toContain('Term99')
-	})
-
-	it('is empty with nothing to say', () => {
-		expect(buildPrompt([])).toBe('')
-		expect(buildPrompt([], '  ')).toBe('')
 	})
 })
 

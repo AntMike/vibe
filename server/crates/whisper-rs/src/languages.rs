@@ -17,12 +17,14 @@ pub(crate) fn auto_language(params: &FullParams) -> bool {
 
 /// The language each window is decoded in: the one asked for, English on an
 /// English-only model, otherwise each window's own detection, resolved against
-/// its speaker and the recording. Detection fills the first `DETECT_PROGRESS`.
+/// its speaker and the recording. `raw` keeps each confident detection as heard
+/// and leaves the rest None. Detection fills the first `DETECT_PROGRESS`.
 pub(crate) fn window_languages(
     whisper: &mut Whisper,
     samples: &[f32],
     windows: &[Window],
     params: &FullParams,
+    raw: bool,
     callbacks: &mut StreamCallbacks<'_>,
 ) -> Result<Vec<Option<String>>> {
     if !auto_language(params) {
@@ -61,6 +63,16 @@ pub(crate) fn window_languages(
             on_progress(((index + 1) * DETECT_PROGRESS / n_windows) as i32);
         }
     }
+    if raw {
+        return Ok(detections
+            .iter()
+            .map(|detection| {
+                confident(detection)
+                    .then(|| Whisper::lang_str(detection.lang).map(str::to_string))
+                    .flatten()
+            })
+            .collect());
+    }
     Ok(resolve_languages(&detections)
         .into_iter()
         .map(|lang| Whisper::lang_str(lang).map(str::to_string))
@@ -79,11 +91,14 @@ struct Detection {
     prob: f32,
 }
 
+fn confident(detection: &Detection) -> bool {
+    detection.secs >= MIN_CONFIDENT_SECS && detection.prob >= MIN_CONFIDENT_PROB
+}
+
 /// Each window's language: its own guess when that is confident, otherwise the
 /// language its group (speaker) speaks longest, then the recording's, then its
 /// own guess after all. Short replies ("yeah", "ok") are where detection fails.
 fn resolve_languages(detections: &[Detection]) -> Vec<i32> {
-    let confident = |detection: &Detection| detection.secs >= MIN_CONFIDENT_SECS && detection.prob >= MIN_CONFIDENT_PROB;
     let mut by_group: BTreeMap<usize, BTreeMap<i32, f32>> = BTreeMap::new();
     let mut overall: BTreeMap<i32, f32> = BTreeMap::new();
     for detection in detections.iter().filter(|detection| confident(detection)) {

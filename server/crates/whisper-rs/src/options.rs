@@ -46,6 +46,10 @@ pub struct TranscribeOptions {
     pub draft_runs: i32,
     /// Known terms the decoder leans toward spelling out (Parakeet and Whisper).
     pub hotwords: Vec<String>,
+    /// With `detect_language`: each window's own detection as heard, None when
+    /// it is too short or unsure, instead of resolved against its speaker and
+    /// the recording. Shows who the detector hears in which language.
+    pub raw_languages: bool,
 }
 
 /// A slice of the input transcribed on its own, such as one speaker turn.
@@ -81,6 +85,7 @@ impl Default for TranscribeOptions {
             windows: Vec::new(),
             draft_runs: 1,
             hotwords: Vec::new(),
+            raw_languages: false,
         }
     }
 }

@@ -38,7 +38,7 @@ export const CONFIG_KEYS = {
 	projectsPath: 'transcription.projectsPath',
 	/** Export every finished transcript automatically: formats, destination, replace rule. */
 	autoExport: 'transcription.autoExport',
-	/** Glossary prompt for Whisper from call names and a draft pass; see `lib/hints`. */
+	/** Names and terms from call names and a draft pass, for voting and spelling; see `lib/hints`. */
 	hints: 'transcription.recognitionHints',
 	/** Models each file is transcribed again with, to merge the runs; see `lib/vote`. */
 	extraPasses: 'transcription.extraPasses',
@@ -46,6 +46,8 @@ export const CONFIG_KEYS = {
 	spokenLanguages: 'transcription.spokenLanguages',
 	/** `list`, `detect` or `detect-list`: whether a quick pass first finds the recording's languages; see `lib/languages`. */
 	languageMode: 'transcription.languageMode',
+	/** Language picked for a person by name, e.g. {"Anton Balabin": "ru"}; see `lib/speaker-language`. */
+	speakerLanguages: 'transcription.speakerLanguages',
 
 	// Recording
 	inputDeviceId: 'recording.inputDeviceId',

@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { m } from '~/paraglide/messages.js'
+import { getLocale } from '~/paraglide/runtime.js'
 import { Input } from '~/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '~/components/ui/popover'
 import { speakerName, type SpeakerNames } from '~/lib/transcript'
@@ -17,6 +18,12 @@ interface SpeakerLabelProps {
 	onRename: (speaker: number, name: string) => void
 	/** Move this line to another speaker, or to a brand-new one past the last index. */
 	onAssign: (speaker: number) => void
+	/** Languages a speaker can be decoded in again; fewer than two hides the choice. */
+	languages?: string[]
+	/** The language this speaker's lines were decoded in, mostly. */
+	language?: string
+	/** Decode this speaker's lines again in `language`. */
+	onLanguage?: (speaker: number, language: string) => void
 }
 
 const chipClass = 'me-2 align-baseline text-[11px] font-semibold text-muted-foreground'
@@ -29,7 +36,7 @@ const interactiveChipClass =
  * same popover moves just this line to another speaker. A line diarization missed gets a dashed
  * placeholder instead, so it can be given a speaker too.
  */
-export function SpeakerLabel({ speaker, speakers, speakerNames, editable, onRename, onAssign }: SpeakerLabelProps) {
+export function SpeakerLabel({ speaker, speakers, speakerNames, editable, onRename, onAssign, languages = [], language, onLanguage }: SpeakerLabelProps) {
 	const label = m.speakerPrefix()
 	const current = speaker != null ? speakerNames?.[speaker] : undefined
 	const [open, setOpen] = useState(false)
@@ -62,7 +69,15 @@ export function SpeakerLabel({ speaker, speakers, speakerNames, editable, onRena
 		if (target !== speaker) onAssign(target)
 	}
 
+	function chooseLanguage(target: string) {
+		cancelledRef.current = true
+		saveName()
+		setOpen(false)
+		if (speaker != null && target !== language) onLanguage?.(speaker, target)
+	}
+
 	const nextSpeaker = speakers.length ? Math.max(...speakers) + 1 : 0
+	const languageNames = new Intl.DisplayNames([getLocale()], { type: 'language' })
 
 	return (
 		<Popover open={open} onOpenChange={handleOpenChange}>
@@ -133,6 +148,29 @@ export function SpeakerLabel({ speaker, speakers, speakerNames, editable, onRena
 						{m.newSpeaker()}
 					</button>
 				</div>
+				{speaker != null && onLanguage && languages.length > 1 && (
+					<>
+						<p className="mt-3 mb-2 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">{m.speakerLanguage()}</p>
+						<div className="flex flex-wrap gap-1.5">
+							{languages.map((code) => (
+								<button
+									key={code}
+									type="button"
+									aria-pressed={code === language}
+									onClick={() => chooseLanguage(code)}
+									className={cn(
+										'cursor-pointer rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors duration-150',
+										code === language
+											? 'border-foreground/20 bg-foreground text-background'
+											: 'border-border bg-muted/50 text-muted-foreground hover:text-foreground',
+									)}>
+									{languageNames.of(code) ?? code}
+								</button>
+							))}
+						</div>
+						<p className="mt-2 text-[11px] text-muted-foreground">{m.speakerLanguageInfo()}</p>
+					</>
+				)}
 			</PopoverContent>
 		</Popover>
 	)

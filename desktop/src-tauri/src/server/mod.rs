@@ -255,6 +255,9 @@ impl ServerProcess {
         if options.detect_language.unwrap_or(false) {
             form = form.text("detect_language", "true");
         }
+        if options.raw_languages.unwrap_or(false) {
+            form = form.text("raw_languages", "true");
+        }
         if let Some(ref prompt) = options.init_prompt {
             if !prompt.is_empty() {
                 form = form.text("prompt", prompt.clone());
@@ -262,6 +265,10 @@ impl ServerProcess {
         }
         if let Some(hotwords) = options.hotwords.as_ref().filter(|hotwords| !hotwords.is_empty()) {
             form = form.text("hotwords", hotwords.join(","));
+        }
+        if let Some(windows) = options.windows.as_ref().filter(|windows| !windows.is_empty()) {
+            let pairs: Vec<String> = windows.iter().map(|[start, end]| format!("{start}-{end}")).collect();
+            form = form.text("windows", pairs.join(","));
         }
         if options.carry_prompt.unwrap_or(false) {
             form = form.text("carry_prompt", "true");

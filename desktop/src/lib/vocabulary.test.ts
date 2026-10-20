@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/plugin-fs', () => ({}))
 vi.mock('@tauri-apps/api/path', () => ({}))
 
-import { dropBlocked, emptyVocabulary, key, knownFamilies, knownTerms, learn, otherScripts, parseTuning, parseVocabulary, tune } from './vocabulary'
+import { dropBlocked, emptyVocabulary, key, knownFamilies, knownTerms, learn, parseTuning, parseVocabulary, tune } from './vocabulary'
 
 describe('vocabulary', () => {
 	it('knows a term once two recordings turned it up, in its first spelling', () => {
@@ -59,7 +59,6 @@ describe('vocabulary', () => {
 			['Фігма', 'Figma'],
 			['Крикет', 'Cricket'],
 		])
-		expect(otherScripts(vocabulary, ['Figma', 'Крикет', 'Діма'])).toEqual(['Фігма', 'Cricket'])
 		// A pinned spelling leads its family and takes in the learned ones.
 		vocabulary = { ...vocabulary, pinned: ['Figma'] }
 		expect(knownFamilies(vocabulary)).toEqual([

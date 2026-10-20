@@ -40,11 +40,6 @@ export const DEFAULT_HINTS: HintsSettings = {
 	correct: false,
 }
 
-/**
- * Whisper reads at most half its 448-token context as prompt and drops the front of anything longer.
- * Cyrillic runs about two characters a token, so this keeps a glossary whole in any script.
- */
-const MAX_PROMPT_CHARS = 400
 const MAX_TERMS = 40
 /** CLIs have big contexts; this only keeps an hours-long draft from becoming a huge stdin. */
 const CLI_CONTEXT_TOKENS = 100_000
@@ -148,29 +143,6 @@ export function parseReplacements(reply: string): Replacement[] {
 		.filter((pair): pair is Replacement => typeof pair?.from === 'string' && typeof pair?.to === 'string')
 		.map(({ from, to }) => ({ from: from.trim(), to: to.trim() }))
 		.filter(({ from, to }) => from && to)
-}
-
-/**
- * The Whisper prompt: the user's own prompt, then the terms as a plain list. No "Glossary:" label —
- * an English word there would nudge a Ukrainian call toward English. Names go first: when the list
- * runs long, it is the last, least important terms that don't fit.
- */
-export function buildPrompt(terms: string[], userPrompt?: string): string {
-	const seen = new Set<string>()
-	const kept: string[] = []
-	let length = 0
-	for (const term of terms.map((term) => term.trim()).filter(Boolean)) {
-		const key = term.toLowerCase()
-		if (seen.has(key)) continue
-		if (length + term.length + 2 > MAX_PROMPT_CHARS) break
-		seen.add(key)
-		kept.push(term)
-		length += term.length + 2
-	}
-	// No period after the list: ended like a sentence, it made Whisper open a window with a lone
-	// "Дякую." and skip the whole 30 s (scripts/asr-eval, Oct 15 pieces: 48% WER against 32%).
-	const glossary = kept.join(', ')
-	return [userPrompt?.trim(), glossary].filter(Boolean).join(' ')
 }
 
 /** The AI connection with the hints' own model, or own command for a custom CLI, when one is set. */

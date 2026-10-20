@@ -43,6 +43,10 @@ pub struct TranscribeOptions {
     pub languages: Option<Vec<String>>,
     /// Only find the language of each speech window, without transcribing; needs `vad_model`.
     pub detect_language: Option<bool>,
+    /// With `detect_language`: each window's language as the detector heard it, unresolved.
+    pub raw_languages: Option<bool>,
+    /// Decode only these `[start, end]` stretches, in seconds, in place of diarized speaker turns.
+    pub windows: Option<Vec<[f64; 2]>>,
 }
 
 pub(crate) const SERVER_DIED: &str = "vibe-server process died during transcription";

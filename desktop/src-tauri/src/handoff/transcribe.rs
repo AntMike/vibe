@@ -133,6 +133,8 @@ impl HandoffHandler {
             hotwords: None,
             languages: None,
             detect_language: None,
+            raw_languages: None,
+            windows: None,
             temperature: None,
             // Passed straight through; whether it is meaningful is the phone's
             // call, made against the `translation` flag we reported.

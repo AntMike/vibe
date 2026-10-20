@@ -6,6 +6,7 @@ import IdleHero from './components/idle-hero'
 import PlayerBar from './components/player-bar'
 import RecentsSidebar from './components/recents-sidebar'
 import SessionView from './components/session-view'
+import { SpeakerLanguageDialog } from './components/speaker-language-dialog'
 import { SessionProvider, useSession } from './session'
 
 /** Collapsed = hidden entirely; the state lives in localStorage so it survives a reload. */
@@ -135,6 +136,7 @@ function Shell() {
 				</AnimatePresence>
 			}>
 			<MainContent />
+			<SpeakerLanguageDialog />
 		</Layout>
 	)
 }

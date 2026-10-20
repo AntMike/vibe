@@ -84,7 +84,14 @@ impl Context {
             if options.detect_language {
                 let params = full_params(&options);
                 let windows = sliced(&options.windows);
-                let languages = window_languages(&mut self.whisper, samples, &windows, &params, &mut callbacks)?;
+                let languages = window_languages(
+                    &mut self.whisper,
+                    samples,
+                    &windows,
+                    &params,
+                    options.raw_languages,
+                    &mut callbacks,
+                )?;
                 let mut result = TranscribeResult::default();
                 for (window, language) in windows.iter().zip(languages) {
                     let segment = Segment {
@@ -315,7 +322,7 @@ fn transcribe_windows(
         .collect();
     let mut params = full_params(&options);
     let n_windows = windows.len().max(1);
-    let languages = window_languages(whisper, samples, &windows, &params, &mut callbacks)?;
+    let languages = window_languages(whisper, samples, &windows, &params, false, &mut callbacks)?;
 
     let progress_start = if auto_language(&params) { DETECT_PROGRESS } else { 0 };
     let mut result = TranscribeResult::default();

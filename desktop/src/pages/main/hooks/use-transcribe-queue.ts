@@ -18,6 +18,7 @@ import { fatalRunError, isGpuOutOfMemory, isUserError } from '~/lib/server-error
 import type { SlackCall } from '~/lib/slack'
 import { carrySpeakerNames, speakersFromCall, typedSpeakerNames, type CallSpeakerTurn } from '~/lib/call-speakers'
 import { mergeRuns } from '~/lib/vote'
+import { canConfuse, decodeSpeaker, languageDoubts, speakersToRedo, withSpeakerLines, type LanguageCheck } from '~/lib/speaker-language'
 import { correctTerms } from '~/lib/hints'
 import { applyReplacements, fixSpelling } from '~/lib/spelling'
 import { callNames, extraPasses, hintOptions, spokenLanguages, type Hints } from './transcribe-hints'
@@ -108,6 +109,13 @@ export interface BatchSummary {
 	exceptions: { name: string; detail: string }[]
 }
 
+/** People whose language the detector was unsure of, waiting for the user to pick one each. */
+export interface LanguageQuestion extends LanguageCheck {
+	jobName: string
+	/** The languages to pick from. */
+	languages: string[]
+}
+
 export interface TranscribeQueue {
 	jobs: Job[]
 	activeId: string | null
@@ -145,6 +153,12 @@ export interface TranscribeQueue {
 	setSpeakerName: (jobId: string, speaker: number, name: string) => void
 	/** Attribute one line to a speaker: a line diarization missed, or one it got wrong. */
 	setSegmentSpeaker: (jobId: string, segmentIndex: number, speaker: number) => void
+	/** Decode one speaker's lines again in `language`, and remember it for their name. Persists like the edits. */
+	setSpeakerLanguage: (jobId: string, speaker: number, language: string) => Promise<void>
+	/** The running file waits on this: whom to decode in which language. */
+	languageQuestion: LanguageQuestion | null
+	/** The language picked for each name; null goes on with the recording's language for all. */
+	answerLanguageQuestion: (answer: Record<string, string> | null) => void
 	cancelCurrent: () => void
 	cancelAll: () => void
 	reset: () => void
@@ -166,7 +180,7 @@ function nextJobId() {
 }
 
 /** Options shared by every file of a run (diarize / vad model paths). */
-async function buildSharedOptions(preference: Preference) {
+async function buildSharedOptions(preference: Preference): Promise<Record<string, unknown>> {
 	const requiresVad = preference.modelMetadata?.capabilities.requires_vad ?? false
 	const modelsFolder = await invoke<string>('get_models_folder')
 	const vadModel = `${modelsFolder}/${config.vadModelFilename}`
@@ -246,6 +260,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 	/** True while a draft pass runs for recognition hints; its lines are not the job's transcript. */
 	const draftingRef = useRef(false)
 	const projectOperationsRef = useRef(new Map<string, Promise<unknown>>())
+	/** A speaker being decoded again outside a run; a run waits for it, the server takes one file at a time. */
+	const redecodeRef = useRef<Promise<unknown>>(Promise.resolve())
 
 	useEffect(() => {
 		preferenceRef.current = preference
@@ -317,6 +333,13 @@ export function useTranscribeQueue(): TranscribeQueue {
 
 	const [batch, setBatch] = useState<BatchProgress | null>(null)
 	const [batchSummary, setBatchSummary] = useState<BatchSummary | null>(null)
+	const [languageQuestion, setLanguageQuestion] = useState<LanguageQuestion | null>(null)
+	const answerRef = useRef<((answer: Record<string, string> | null) => void) | null>(null)
+	const answerLanguageQuestion = useCallback((answer: Record<string, string> | null) => {
+		answerRef.current?.(answer)
+		answerRef.current = null
+		setLanguageQuestion(null)
+	}, [])
 	const runResultsRef = useRef<Map<string, AutoExportResult>>(new Map())
 
 	/**
@@ -402,6 +425,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 		let runDone = 0
 		let runSeconds = 0
 		runResultsRef.current = new Map()
+		await redecodeRef.current
 		if (runTotal > 1) {
 			setBatchSummary(null)
 			setBatch({ total: runTotal, done: 0, startedAt: runStartedAt, secondsPerFile: null })
@@ -451,16 +475,34 @@ export function useTranscribeQueue(): TranscribeQueue {
 					const options = preferenceRef.current
 					// The detection's windows have no text: kept out of the job like the draft's lines.
 					draftingRef.current = true
-					const languages = await spokenLanguages(
+					// A call can mix up Ukrainian and Russian: its turns are heard one person at a time to see whom.
+					const turns = canConfuse(options.spokenLanguages) ? next.callSpeakers : undefined
+					const { languages, heard: detections } = await spokenLanguages(
 						next.path,
 						options.languageMode,
 						options.spokenLanguages,
 						// A fixed language needs no allow-list: detecting is only for auto.
 						(options.modelMetadata?.capabilities.language_detection ?? false) && (!options.modelOptions.lang || options.modelOptions.lang === 'auto'),
 						(message) => toast.warning(m.languageDetectionFailed({ message }), { position: 'bottom-center', duration: 8000 }),
+						turns,
 					)
 					draftingRef.current = false
 					if (abortCurrentRef.current || abortAllRef.current) throw new Error('cancelled')
+					let remembered = options.speakerLanguages
+					const check = turns && languageDoubts(detections, turns, remembered)
+					if (check) {
+						void notify(m.speakerLanguagesNotifyTitle(), m.speakerLanguagesNotifyBody({ name: next.name, count: String(check.doubts.length) }))
+						const answer = await new Promise<Record<string, string> | null>((resolve) => {
+							answerRef.current = resolve
+							const choices = options.spokenLanguages.length > 0 ? options.spokenLanguages : ['uk', 'ru', 'en']
+							setLanguageQuestion({ ...check, jobName: next.name, languages: choices })
+						})
+						if (abortCurrentRef.current || abortAllRef.current) throw new Error('cancelled')
+						if (answer) {
+							remembered = { ...remembered, ...answer }
+							options.setSpeakerLanguages((current) => ({ ...current, ...answer }))
+						}
+					}
 					let hints: Hints | null = null
 					if (options.hints.enabled && options.modelMetadata?.capabilities.text_prompts !== false) {
 						draftingRef.current = true
@@ -468,7 +510,6 @@ export function useTranscribeQueue(): TranscribeQueue {
 							hints = await hintOptions(next.path, next.callSpeakers, {
 								settings: options.hints,
 								connection: options.ai.connection,
-								userPrompt: options.modelOptions.init_prompt,
 								mainModelPath: current.modelPath,
 								vocabularyPath: options.hints.learn ? await vocabularyPath(current.projectsPath) : undefined,
 								lang: options.modelOptions.lang,
@@ -496,7 +537,6 @@ export function useTranscribeQueue(): TranscribeQueue {
 							...withoutUnsupportedOptions(options.modelOptions, options.modelMetadata?.capabilities),
 							...(languages.length ? { languages } : {}),
 							...shared,
-							...hints?.prompt,
 						},
 					})
 					const seconds = Math.round((performance.now() - startedAt) / 1000)
@@ -546,13 +586,25 @@ export function useTranscribeQueue(): TranscribeQueue {
 					}
 					// A recorded call knows who was talking when: give each sentence that person.
 					const fromCall = next.callSpeakers && speakersFromCall(heard, next.callSpeakers)
-					const segments = fromCall ? fromCall.segments : heard
+					let segments = fromCall ? fromCall.segments : heard
 					// Re-transcribed: names the user typed before win over the call's.
 					const typed =
 						next.previous?.speakerNames &&
 						typedSpeakerNames(next.previous.segments, next.previous.speakerNames, next.previous.callSpeakers ?? next.callSpeakers)
 					const carried = typed && carrySpeakerNames(next.previous!.segments, typed, segments)
 					const speakerNames = carried ? { ...fromCall?.speakerNames, ...carried } : fromCall ? fromCall.speakerNames : next.speakerNames
+					// Someone picked to speak another language than the call settled on: their lines again, in it.
+					for (const { speaker, language } of speakersToRedo(segments, speakerNames, remembered)) {
+						draftingRef.current = true
+						try {
+							const decodeOptions = { ...withoutUnsupportedOptions(options.modelOptions, options.modelMetadata?.capabilities), ...shared }
+							segments = withSpeakerLines(segments, speaker, await decodeSpeaker(next.path, segments, speaker, language, decodeOptions))
+						} catch (error) {
+							toast.warning(m.speakerLanguageFailed({ message: errorParts(error).message }), { position: 'bottom-center', duration: 8000 })
+						} finally {
+							draftingRef.current = false
+						}
+					}
 					patch(next.id, { status: 'done', progress: 100, segments, seconds, speakerNames })
 					completedAny = true
 					runDone += 1
@@ -849,20 +901,65 @@ export function useTranscribeQueue(): TranscribeQueue {
 		[commit],
 	)
 
+	const setSpeakerLanguage = useCallback(
+		async (jobId: string, speaker: number, language: string) => {
+			const job = jobsRef.current.find((candidate) => candidate.id === jobId)
+			if (!job) return
+			const current = preferenceRef.current
+			const name = job.speakerNames?.[speaker]?.trim()
+			if (name) current.setSpeakerLanguages((languages) => ({ ...languages, [name]: language }))
+			if (runningRef.current) {
+				toast.warning(m.speakerLanguageBusy(), { position: 'bottom-center' })
+				return
+			}
+			if (!current.modelPath) {
+				toast.error(m.noModelSelected(), { position: 'bottom-center' })
+				return
+			}
+			const toastId = toast.loading(m.speakerLanguageRunning(), { position: 'bottom-center' })
+			const work = (async () => {
+				await invoke('load_model', {
+					modelPath: current.modelPath,
+					gpuDevice: current.gpuDevice,
+					noGpu: current.noGpu || gpuOutOfMemoryBefore(current.modelPath),
+					unloadTimeoutMinutes: current.unloadTimeoutMinutes,
+				})
+				const options = { ...withoutUnsupportedOptions(current.modelOptions, current.modelMetadata?.capabilities), ...(await buildSharedOptions(current)) }
+				const heard = await decodeSpeaker(job.path, job.segments, speaker, language, options)
+				// Merged into the lines as they are now: an edit made while it decoded stays.
+				const latest = jobsRef.current.find((candidate) => candidate.id === jobId)
+				if (!latest) return
+				const segments = withSpeakerLines(latest.segments, speaker, heard)
+				commit(jobsRef.current.map((candidate) => (candidate.id === jobId ? { ...candidate, segments } : candidate)))
+				if (latest.savedPath) void updateTranscriptSegments(latest.savedPath, segments)
+			})()
+			redecodeRef.current = work.catch(() => {})
+			try {
+				await work
+				toast.dismiss(toastId)
+			} catch (error) {
+				toast.error(m.speakerLanguageFailed({ message: errorParts(error).message }), { id: toastId, position: 'bottom-center' })
+			}
+		},
+		[commit],
+	)
+
 	const cancelCurrent = useCallback(() => {
 		if (!activeIdRef.current) return
 		abortCurrentRef.current = true
 		setIsAborting(true)
 		emit('abort_transcribe')
-	}, [])
+		answerLanguageQuestion(null)
+	}, [answerLanguageQuestion])
 
 	const cancelAll = useCallback(() => {
 		abortAllRef.current = true
 		abortCurrentRef.current = true
 		setIsAborting(true)
 		emit('abort_transcribe')
+		answerLanguageQuestion(null)
 		commit(jobsRef.current.map((job) => (job.status === 'queued' ? { ...job, status: 'cancelled' } : job)))
-	}, [commit])
+	}, [answerLanguageQuestion, commit])
 
 	const reset = useCallback(() => {
 		if (runningRef.current) cancelAll()
@@ -894,6 +991,9 @@ export function useTranscribeQueue(): TranscribeQueue {
 		setJobThread,
 		setSpeakerName,
 		setSegmentSpeaker,
+		setSpeakerLanguage,
+		languageQuestion,
+		answerLanguageQuestion,
 		cancelCurrent,
 		cancelAll,
 		reset,

@@ -2,17 +2,15 @@ import { invoke } from '@tauri-apps/api/core'
 import type { AiConnection } from '~/lib/ai'
 import type { CallSpeakerTurn } from '~/lib/call-speakers'
 import * as config from '~/lib/config'
-import { buildPrompt, dueForTuning, refineDraft, tuneVocabulary, type HintsSettings } from '~/lib/hints'
+import { dueForTuning, refineDraft, tuneVocabulary, type HintsSettings } from '~/lib/hints'
 import { detectedLanguages, type LanguageMode } from '~/lib/languages'
 import type { ModelMetadata } from '~/lib/model'
 import type { Segment, Transcript } from '~/lib/transcript'
-import { dropBlocked, knownFamilies, learn, loadVocabulary, otherScripts, saveVocabulary, type Vocabulary } from '~/lib/vocabulary'
+import { dropBlocked, knownFamilies, learn, loadVocabulary, saveVocabulary, type Vocabulary } from '~/lib/vocabulary'
 
 export interface HintsRun {
 	settings: HintsSettings
 	connection: AiConnection
-	/** The prompt the user typed in settings; the glossary goes after it. */
-	userPrompt?: string
 	mainModelPath: string
 	/** Where the learned vocabulary lives, when `settings.learn` is on. */
 	vocabularyPath?: string
@@ -55,8 +53,6 @@ async function draftSegments(path: string, draftModel: string, swap: boolean, ru
 }
 
 export interface Hints {
-	/** Prompt options for the main pass, or null when there is nothing to hint. */
-	prompt: { init_prompt: string; carry_prompt: true } | null
 	/** What the draft pass heard, to merge with the main pass; see `mergeRuns`. */
 	draft: Segment[]
 	/** The known terms as families, main spelling first; see `knownFamilies`. */
@@ -90,9 +86,11 @@ export async function extraPasses(
 }
 
 /**
- * The languages every pass of a file is kept to. Detecting runs the loaded main model over each speech
- * window without decoding, so it costs no model swap; a model that can't detect, a failed detection, or
- * one that heard nothing falls back to the list. Never throws.
+ * The languages every pass of a file is kept to, and each speech window as the detector heard it
+ * (`language` unset where it was unsure). Detecting runs the loaded main model over each speech
+ * window without decoding, so it costs no model swap; a model that can't detect, a failed detection,
+ * or one that heard nothing falls back to the list. With `turns` it detects even for a fixed list,
+ * over the call's turns only, so each window is one person's. Never throws.
  */
 export async function spokenLanguages(
 	path: string,
@@ -100,24 +98,27 @@ export async function spokenLanguages(
 	list: string[],
 	canDetect: boolean,
 	onWarning: (message: string) => void,
-): Promise<string[]> {
-	if (mode === 'list' || !canDetect) return list
+	turns?: CallSpeakerTurn[],
+): Promise<{ languages: string[]; heard: Segment[] }> {
+	if ((mode === 'list' && !turns?.length) || !canDetect) return { languages: list, heard: [] }
 	try {
-		const among = mode === 'detect-list' ? list : []
+		const among = mode !== 'detect' ? list : []
 		const detection = await invoke<Transcript>('transcribe', {
 			options: {
 				path,
 				detect_language: true,
+				raw_languages: true,
 				vad_model: `${await invoke<string>('get_models_folder')}/${config.vadModelFilename}`,
 				...(among.length ? { languages: among } : {}),
+				...(turns?.length ? { windows: turns.filter((turn) => turn.end > turn.start).map((turn) => [turn.start, turn.end]) } : {}),
 			},
 		})
-		const detected = detectedLanguages(detection.segments)
-		if (detected.length > 0) return detected
+		const detected = mode === 'list' ? [] : detectedLanguages(detection.segments)
+		return { languages: detected.length > 0 ? detected : list, heard: detection.segments }
 	} catch (error) {
 		onWarning(message(error))
 	}
-	return list
+	return { languages: list, heard: [] }
 }
 
 /** A missing or broken vocabulary only warns: a broken one is left alone for the user to fix. */
@@ -144,7 +145,7 @@ function message(error: unknown) {
 
 /**
  * The hints for one file. A failed draft or AI step only warns: the file is still transcribed, with
- * whatever names the call gave. Failing to load the main model back does throw, since the
+ * fewer runs to vote with and fewer terms to fix spelling by. Failing to load the main model back does throw, since the
  * transcription can't run without it.
  */
 // ponytail: swaps models twice per file; draft the whole queue first if batches of calls get slow.
@@ -195,10 +196,7 @@ export async function hintOptions(path: string, turns: CallSpeakerTurn[] | undef
 		if (run.settings.refiner !== 'words' && (terms.length > 0 || tuned))
 			await writeVocabulary(run, terms.length > 0 ? learn(vocabulary, terms) : vocabulary)
 	}
-	const pinned = vocabulary?.pinned ?? []
-	// A term's spelling in the other script goes last, so Whisper knows it too while room is left: Figma beside Фігма.
-	const scripts = vocabulary ? otherScripts(vocabulary, [...pinned, ...terms]) : []
-	const prompt = buildPrompt([...names, ...pinned, ...terms, ...scripts], run.userPrompt)
-	const hinted = Boolean(prompt) && prompt !== run.userPrompt?.trim()
-	return { prompt: hinted ? { init_prompt: prompt, carry_prompt: true } : null, draft, families }
+	// No Whisper prompt: listed names and terms made it hear them where they weren't said ("все, що" as
+	// "Сашо"; Oct 15 pieces 32% WER against 27% without). The terms fix spelling after the fact instead.
+	return { draft, families }
 }

@@ -5,6 +5,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { m } from '~/paraglide/messages.js'
 import { getLocale, getTextDirection } from '~/paraglide/runtime.js'
 import { Button } from '~/components/ui/button'
+import { speakerLanguage } from '~/lib/speaker-language'
 import { formatTimestamp, type Segment, type SpeakerNames } from '~/lib/transcript'
 import { cn } from '~/lib/style'
 import { usePreferenceProvider } from '~/providers/preference'
@@ -232,6 +233,10 @@ interface SegmentBlockProps {
 	onMove: (index: number, direction: 1 | -1, caret: CaretIntent) => void
 	onRenameSpeaker: (speaker: number, name: string) => void
 	onAssignSpeaker: (index: number, speaker: number) => void
+	/** Languages a speaker can be decoded in again, and the one each speaker was decoded in. */
+	languages: string[]
+	speakerLanguages: Record<number, string | undefined>
+	onSpeakerLanguage?: (speaker: number, language: string) => void
 }
 
 const SegmentBlock = memo(function SegmentBlock({
@@ -251,6 +256,9 @@ const SegmentBlock = memo(function SegmentBlock({
 	onMove,
 	onRenameSpeaker,
 	onAssignSpeaker,
+	languages,
+	speakerLanguages,
+	onSpeakerLanguage,
 }: SegmentBlockProps) {
 	const textRef = useRef<HTMLSpanElement>(null)
 
@@ -328,6 +336,9 @@ const SegmentBlock = memo(function SegmentBlock({
 						editable={editable}
 						onRename={onRenameSpeaker}
 						onAssign={(speaker) => onAssignSpeaker(index, speaker)}
+						languages={languages}
+						language={segment.speaker != null ? speakerLanguages[segment.speaker] : undefined}
+						onLanguage={onSpeakerLanguage}
 					/>
 				)}
 
@@ -619,6 +630,19 @@ export default function TranscriptView({
 		() => [...new Set(job.segments.flatMap((segment) => (segment.speaker != null ? [segment.speaker] : [])))].sort((a, b) => a - b),
 		[job.segments],
 	)
+	const speakerLanguages = useMemo(() => Object.fromEntries(speakers.map((speaker) => [speaker, speakerLanguage(job.segments, speaker)])), [job.segments, speakers])
+	// The languages set as spoken, else the ones this transcript was heard in.
+	const languages = useMemo(
+		() =>
+			preference.spokenLanguages.length > 0
+				? preference.spokenLanguages
+				: [...new Set(job.segments.flatMap((segment) => (segment.language ? [segment.language] : [])))],
+		[job.segments, preference.spokenLanguages],
+	)
+	const changeSpeakerLanguage = useCallback(
+		(speaker: number, language: string) => void queue.setSpeakerLanguage(job.id, speaker, language),
+		[job.id, queue],
+	)
 
 	const showJump = playing && jumpVisible && !following && activeIndex >= 0 && tab === 'transcript'
 	const canTranscribeSaved =
@@ -691,6 +715,10 @@ export default function TranscriptView({
 										onMove={moveEdit}
 										onRenameSpeaker={renameSpeaker}
 										onAssignSpeaker={assignSpeaker}
+										languages={languages}
+										speakerLanguages={speakerLanguages}
+										// Only with the audio at hand, and not while a run holds the server.
+										onSpeakerLanguage={job.path && !queue.running ? changeSpeakerLanguage : undefined}
 									/>
 								</div>
 							)

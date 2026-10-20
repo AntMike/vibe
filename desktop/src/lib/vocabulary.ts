@@ -133,13 +133,6 @@ export function knownFamilies(vocabulary: Vocabulary): string[][] {
 
 export const knownTerms = (vocabulary: Vocabulary) => knownFamilies(vocabulary).map(([term]) => term)
 
-/** For each of `terms`, its family's spelling in the other script, if it has one: Figma for Фігма. */
-export function otherScripts(vocabulary: Vocabulary, terms: string[]): string[] {
-	const families = new Map(knownFamilies(vocabulary).map((family) => [key(family[0]), family]))
-	const latin = (term: string) => /\p{Script=Latin}/u.test(term)
-	return terms.flatMap((term) => (families.get(key(term)) ?? []).filter((form) => latin(form) !== latin(term)).slice(0, 1))
-}
-
 /** `a` and `b` as one term spelled `main`, with `forms`; a recording that had both counts once at most. */
 function joined(main: string, a: LearnedTerm, b: LearnedTerm, recordings: number, forms: string[]): LearnedTerm {
 	return entry(main, Math.min(recordings, a.seen + b.seen), Math.max(a.last, b.last), forms)
