@@ -84,7 +84,9 @@ pub fn build_verbose_json(result: &TranscribeResult, diar_segments: &[diarizatio
                 start: cs_to_seconds(segment.start),
                 end: cs_to_seconds(segment.end),
                 text: segment.text.clone(),
-                speaker: match_speaker(cs_to_seconds(segment.start), cs_to_seconds(segment.end), diar_segments),
+                speaker: segment.speaker.or_else(|| {
+                    match_speaker(cs_to_seconds(segment.start), cs_to_seconds(segment.end), diar_segments)
+                }),
                 no_speech_prob: segment.no_speech_prob,
                 language: segment.language.clone(),
             })
@@ -127,6 +129,21 @@ mod tests {
 
     fn turn(start: f64, end: f64, speaker_id: usize) -> diarization::Segment {
         diarization::Segment { start, end, speaker_id }
+    }
+
+    #[test]
+    fn a_segments_own_speaker_wins_over_time_matching() {
+        let segment = Segment {
+            start: 100,
+            end: 300,
+            text: "hi".into(),
+            no_speech_prob: 0.0,
+            language: None,
+            speaker: Some(3),
+        };
+        let result = TranscribeResult { segments: vec![segment] };
+        let verbose = build_verbose_json(&result, &[turn(0.0, 10.0, 0)]);
+        assert_eq!(serde_json::to_value(&verbose).unwrap()["segments"][0]["speaker"], 3);
     }
 
     #[test]

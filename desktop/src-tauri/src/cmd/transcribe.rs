@@ -187,6 +187,8 @@ pub async fn transcribe(
         });
     }
 
+    // Overlapping speakers are decoded window by window, so lines arrive out of time order.
+    segments.sort_by_key(|segment| segment.start);
     let elapsed = start.elapsed();
     let transcript = Transcript {
         processing_time_sec: elapsed.as_secs(),

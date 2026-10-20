@@ -30,65 +30,100 @@ pub fn diarize(model_path: &str, _samples: &[f32]) -> Vec<Segment> {
 const MIN_CUT_SEARCH_SECS: f64 = 0.25;
 /// Frame (samples, 20 ms at 16 kHz) whose energy picks the quietest cut.
 const CUT_FRAME: usize = 320;
-/// A turn inside another speaker's gets its own chunk from this long (seconds): a short reply
-/// over someone, rather than an "mm-hm" that would only cut their sentence in two.
+/// A speaker's turns this close (seconds) to the next one join it in one window.
+const MERGE_GAP_SECS: f64 = 0.5;
+/// A window overlapping another speaker's stays whole from this long (seconds): a short reply
+/// over someone, rather than an "mm-hm" that stays inside the speaker it interrupts.
 // ponytail: calibration knob; lower it if short replies still land on the other speaker.
 const MIN_NESTED_SECS: f64 = 0.7;
 
-/// Speaker turns as chunks that tile the whole recording, to transcribe one at
-/// a time. A speaker's consecutive turns merge. A turn nested in another
-/// speaker's splits it in three when long enough, else is left to that one. Each speaker change is cut at the quietest
-/// moment between the two turns, and the first and last chunks reach the ends
-/// of the audio: the diarizer misses speech (seconds of it, at times), and
-/// audio outside every chunk would never be transcribed.
+/// Speaker turns as per-speaker windows that cover the whole recording, to transcribe one at
+/// a time. A speaker's turns less than `MERGE_GAP_SECS` apart merge into one window. Windows of
+/// different speakers may overlap, each kept whole, unless the shorter is under
+/// `MIN_NESTED_SECS`: its overlapping part is then left to the other. Audio no window covers
+/// (the diarizer misses speech, seconds of it at times) is split at its quietest moment between
+/// the windows either side, and the first and last windows reach the ends of the audio, since
+/// audio outside every window would never be transcribed.
+// ponytail: overlapping windows may transcribe the same words twice; dedup is the upgrade.
 pub fn speaker_chunks(turns: &[Segment], samples: &[f32]) -> Vec<Segment> {
     let mut sorted = turns.to_vec();
     sorted.sort_by(|a, b| a.start.total_cmp(&b.start));
-    let mut chunks: Vec<Segment> = Vec::new();
+    let mut windows: Vec<Segment> = Vec::new();
     for turn in sorted {
-        if let Some(last) = chunks.last_mut() {
-            if turn.end <= last.end {
-                let long_enough = |secs: f64| secs >= MIN_NESTED_SECS;
-                if turn.speaker_id != last.speaker_id
-                    && long_enough(turn.end - turn.start)
-                    && long_enough(turn.start - last.start)
-                {
-                    let rest = Segment {
-                        start: turn.end,
-                        ..last.clone()
-                    };
-                    last.end = turn.start;
-                    chunks.push(turn);
-                    if long_enough(rest.end - rest.start) {
-                        chunks.push(rest);
-                    }
-                }
+        match windows.iter_mut().rfind(|window| window.speaker_id == turn.speaker_id) {
+            Some(last) if turn.start - last.end < MERGE_GAP_SECS => last.end = last.end.max(turn.end),
+            _ => windows.push(turn),
+        }
+    }
+
+    let whole = windows.clone();
+    for (index, window) in windows.iter_mut().enumerate() {
+        let secs = whole[index].end - whole[index].start;
+        if secs >= MIN_NESTED_SECS {
+            continue;
+        }
+        for other in &whole {
+            // `other` is longer, so it cannot sit strictly inside `window`: the overlap
+            // is a prefix, a suffix or all of it.
+            let overlaps = other.start < window.end && other.end > window.start;
+            if other.speaker_id == window.speaker_id || other.end - other.start <= secs || !overlaps {
                 continue;
             }
-            if turn.speaker_id == last.speaker_id {
-                last.end = turn.end;
-                continue;
+            if other.start <= window.start {
+                window.start = other.end;
+            } else {
+                window.end = other.start;
             }
         }
-        chunks.push(turn);
     }
-    for index in 1..chunks.len() {
-        let (end, start) = (chunks[index - 1].end, chunks[index].start);
+    windows.retain(|window| window.end > window.start);
+    windows.sort_by(|a, b| a.start.total_cmp(&b.start));
+
+    let mut covered: Vec<(f64, f64)> = Vec::new();
+    for window in &windows {
+        match covered.last_mut() {
+            Some(last) if window.start <= last.1 => last.1 = last.1.max(window.end),
+            _ => covered.push((window.start, window.end)),
+        }
+    }
+    for pair in covered.windows(2) {
+        let (end, start) = (pair[0].1, pair[1].0);
+        let floor = windows
+            .iter()
+            .filter(|window| window.end == end)
+            .map(|window| window.start)
+            .fold(0.0, f64::max);
+        let ceiling = windows
+            .iter()
+            .filter(|window| window.start == start)
+            .map(|window| window.end)
+            .fold(f64::INFINITY, f64::min);
         let mid = (end + start) / 2.0;
-        let lo = end.min(start).min(mid - MIN_CUT_SEARCH_SECS).max(chunks[index - 1].start);
-        let hi = end.max(start).max(mid + MIN_CUT_SEARCH_SECS).min(chunks[index].end);
+        let lo = (mid - MIN_CUT_SEARCH_SECS).min(end).max(floor);
+        let hi = (mid + MIN_CUT_SEARCH_SECS).max(start).min(ceiling);
         let cut = quietest_point(samples, lo, hi);
-        chunks[index - 1].end = cut;
-        chunks[index].start = cut;
+        for window in &mut windows {
+            if window.end == end {
+                window.end = cut;
+            }
+            if window.start == start {
+                window.start = cut;
+            }
+        }
     }
-    if let Some(first) = chunks.first_mut() {
-        first.start = 0.0;
+    if let (Some(first), Some(last)) = (covered.first(), covered.last()) {
+        for window in &mut windows {
+            if window.start == first.0 {
+                window.start = 0.0;
+            }
+            if window.end == last.1 {
+                window.end = samples.len() as f64 / 16_000.0;
+            }
+        }
     }
-    if let Some(last) = chunks.last_mut() {
-        last.end = samples.len() as f64 / 16_000.0;
-    }
-    chunks.retain(|chunk| chunk.end > chunk.start);
-    chunks
+    windows.retain(|window| window.end > window.start);
+    windows.sort_by(|a, b| a.start.total_cmp(&b.start));
+    windows
 }
 
 /// The centre (seconds) of the lowest-energy frame between `lo` and `hi`.
@@ -136,26 +171,56 @@ mod tests {
     }
 
     #[test]
-    fn chunks_tile_the_audio_and_cut_where_it_is_quiet() {
-        let samples = audio(26.0, &[(10.38, 10.5), (16.0, 16.1)]);
+    fn windows_cover_the_audio_and_cut_where_it_is_quiet() {
+        let samples = audio(26.0, &[(16.0, 16.1)]);
         let chunks = speaker_chunks(
             &[
-                turn(10.0, 12.0, 1), // overlaps the turn before it
+                turn(10.0, 12.0, 1), // overlaps the turn before it: both kept whole
                 turn(0.5, 4.0, 0),
-                turn(5.0, 10.5, 0),  // same speaker: same chunk, gap or not
+                turn(4.2, 10.5, 0),  // same speaker, close: same window
                 turn(11.0, 11.5, 0), // nested in speaker 1's turn: left to it
                 turn(20.0, 25.0, 0), // the speech the diarizer missed at 13-20 is still covered
             ],
             &samples,
         );
-        assert_eq!(spans(&chunks), vec![(0.0, 10.39, 0), (10.39, 16.01, 1), (16.01, 26.0, 0)]);
+        assert_eq!(spans(&chunks), vec![(0.0, 10.5, 0), (10.0, 16.01, 1), (16.01, 26.0, 0)]);
         assert!(speaker_chunks(&[], &samples).is_empty());
     }
 
     #[test]
-    fn a_reply_inside_another_turn_gets_its_own_chunk() {
-        let samples = audio(20.0, &[(4.9, 5.0), (6.0, 6.1)]);
-        let chunks = speaker_chunks(&[turn(0.0, 20.0, 0), turn(5.0, 6.0, 1)], &samples);
-        assert_eq!(spans(&chunks), vec![(0.0, 4.92, 0), (4.92, 6.02, 1), (6.02, 20.0, 0)]);
+    fn a_reply_over_another_turn_keeps_both_whole() {
+        let samples = audio(10.0, &[]);
+        let chunks = speaker_chunks(&[turn(0.0, 10.0, 0), turn(4.0, 8.0, 1)], &samples);
+        assert_eq!(spans(&chunks), vec![(0.0, 10.0, 0), (4.0, 8.0, 1)]);
+    }
+
+    #[test]
+    fn a_blip_inside_another_turn_stays_in_it() {
+        let samples = audio(10.0, &[]);
+        let chunks = speaker_chunks(&[turn(0.0, 10.0, 0), turn(5.0, 5.5, 1)], &samples);
+        assert_eq!(spans(&chunks), vec![(0.0, 10.0, 0)]);
+    }
+
+    #[test]
+    fn a_blip_on_a_turn_edge_is_trimmed_to_the_part_outside() {
+        let samples = audio(10.0, &[]);
+        let chunks = speaker_chunks(&[turn(0.0, 6.0, 0), turn(5.5, 6.1, 1)], &samples);
+        assert_eq!(spans(&chunks), vec![(0.0, 6.0, 0), (6.0, 10.0, 1)]);
+    }
+
+    #[test]
+    fn audio_no_turn_covers_is_split_at_the_quietest_point() {
+        let samples = audio(14.0, &[(6.4, 6.5)]);
+        let chunks = speaker_chunks(&[turn(1.0, 5.0, 0), turn(8.0, 12.0, 1)], &samples);
+        assert_eq!(spans(&chunks), vec![(0.0, 6.41, 0), (6.41, 14.0, 1)]);
+    }
+
+    #[test]
+    fn one_speakers_turns_merge_when_close() {
+        let samples = audio(5.0, &[(2.5, 2.6)]);
+        let chunks = speaker_chunks(&[turn(0.0, 2.0, 0), turn(2.3, 4.0, 0)], &samples);
+        assert_eq!(spans(&chunks), vec![(0.0, 5.0, 0)]);
+        let chunks = speaker_chunks(&[turn(0.0, 2.0, 0), turn(3.0, 4.0, 0)], &samples);
+        assert_eq!(spans(&chunks), vec![(0.0, 2.51, 0), (2.51, 5.0, 0)]);
     }
 }

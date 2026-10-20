@@ -84,6 +84,8 @@ pub struct Segment {
     pub no_speech_prob: f32,
     /// The language this segment was decoded in (ISO code), when known.
     pub language: Option<String>,
+    /// The `group` of the window this segment was decoded from, when windowed.
+    pub speaker: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

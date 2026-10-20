@@ -216,6 +216,8 @@ impl HandoffHandler {
                 return Err(TransferError::new("internal_error", message));
             }
         };
+        // Overlapping speakers are decoded window by window, so lines arrive out of time order.
+        segments.sort_by_key(|segment| segment.start);
         let processing_time_sec = start.elapsed().as_secs();
         let completion = protocol::HandoffCompletion {
             // The store appends its own `-<yyyyMMdd-HHmmss>` stamp, so a bare

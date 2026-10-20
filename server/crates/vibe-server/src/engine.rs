@@ -116,6 +116,7 @@ impl Engine {
                             text: segment.text,
                             no_speech_prob: 0.0,
                             language: None,
+                            speaker: None,
                         })
                         .collect(),
                 })
@@ -351,6 +352,7 @@ impl Engine {
                                     text: segment.text.clone(),
                                     no_speech_prob: 0.0,
                                     language: None,
+                                    speaker: None,
                                 };
                                 if let Some(callback) = on_segment.as_mut() {
                                     callback(segment.clone());
@@ -432,6 +434,7 @@ fn nemotron_segment(transcription: &nemotron_rs::Transcription) -> Option<Segmen
         text: transcription.text.clone(),
         no_speech_prob: 0.0,
         language: None,
+        speaker: None,
     })
 }
 
@@ -481,5 +484,6 @@ fn parakeet_segment(transcription: &parakeet_rs::Transcription) -> Option<Segmen
         text: transcription.text.clone(),
         no_speech_prob: 0.0,
         language: None,
+        speaker: None,
     })
 }

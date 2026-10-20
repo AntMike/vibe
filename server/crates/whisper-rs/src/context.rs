@@ -93,6 +93,7 @@ impl Context {
                         text: String::new(),
                         no_speech_prob: 0.0,
                         language,
+                        speaker: None,
                     };
                     if let Some(on_segment) = callbacks.on_segment.as_mut() {
                         on_segment(segment.clone());
@@ -164,6 +165,7 @@ fn convert(segment: &FullSegment) -> Segment {
         text: segment.text.clone(),
         no_speech_prob: segment.no_speech_prob,
         language: None,
+        speaker: None,
     }
 }
 
@@ -340,6 +342,7 @@ fn transcribe_windows(
             segment.start += t0cs;
             segment.end += t0cs;
             segment.language = language.clone();
+            segment.speaker = Some(window.group);
             if let Some(on_segment) = callbacks.on_segment.as_mut() {
                 on_segment(segment.clone());
             }
@@ -350,6 +353,9 @@ fn transcribe_windows(
             on_progress((progress_start + (index + 1) * (100 - progress_start) / n_windows) as i32);
         }
     }
+    // Overlapping windows (one per speaker) decode out of time order; streaming
+    // keeps decode order, the final result is by start.
+    result.segments.sort_by_key(|segment| segment.start);
     Ok(result)
 }
 

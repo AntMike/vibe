@@ -67,7 +67,10 @@ pub(super) fn stream_transcription(
                         "text": segment.text,
                         "no_speech_prob": segment.no_speech_prob,
                     });
-                    if let Some(speaker) = format::match_speaker(start, end, &segment_diar_segments) {
+                    if let Some(speaker) = segment
+                        .speaker
+                        .or_else(|| format::match_speaker(start, end, &segment_diar_segments))
+                    {
                         event["speaker"] = serde_json::json!(speaker);
                     }
                     if let Some(language) = segment.language {
