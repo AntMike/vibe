@@ -127,7 +127,7 @@ impl Context {
         }
         if let Some(on_segment) = callbacks.on_segment.as_mut() {
             engine_callbacks.on_new_segment = Some(Box::new(|segment: &FullSegment| {
-                if !is_hallucination(&segment.text) {
+                if !is_hallucination(segment) {
                     on_segment(convert(segment))
                 }
             }));
@@ -142,7 +142,7 @@ impl Context {
         Ok(TranscribeResult {
             segments: segments
                 .iter()
-                .filter(|segment| !is_hallucination(&segment.text))
+                .filter(|segment| !is_hallucination(segment))
                 .map(convert)
                 .collect(),
         })
@@ -160,9 +160,18 @@ const HALLUCINATIONS: &[&str] = &[
     "продолжение следует",
 ];
 
-fn is_hallucination(text: &str) -> bool {
-    let text = text.to_lowercase();
+/// Lines Whisper puts on a blip of noise between turns, lowercase without punctuation. They count
+/// as said only when they last as long as saying them takes: "Дякую." over 0.2 s is made up.
+const BLIP_LINES: &[&str] = &["дякую", "спасибо", "thank you", "thanks"];
+/// Centiseconds a blip line has to last to be kept.
+// ponytail: calibration knob; a real one-word "Дякую" rarely runs under a second, raise it if blips get through.
+const BLIP_MIN_CS: i64 = 100;
+
+fn is_hallucination(segment: &FullSegment) -> bool {
+    let text = segment.text.to_lowercase();
+    let bare = text.trim_matches(|c: char| !c.is_alphanumeric());
     HALLUCINATIONS.iter().any(|line| text.contains(line))
+        || (segment.t1 - segment.t0 < BLIP_MIN_CS && BLIP_LINES.contains(&bare))
 }
 
 fn convert(segment: &FullSegment) -> Segment {
@@ -220,7 +229,7 @@ fn transcribe_stable_timestamps(
             whisper.full_stream(&params, window, &mut engine_callbacks)?
         };
 
-        for segment in decoded.iter().filter(|segment| !is_hallucination(&segment.text)) {
+        for segment in decoded.iter().filter(|segment| !is_hallucination(segment)) {
             let mut segment = convert(segment);
             segment.start += t0cs;
             segment.end += t0cs;
@@ -344,7 +353,7 @@ fn transcribe_windows(
         };
 
         let t0cs = (window.start_sample / (SAMPLE_RATE / 100)) as i64;
-        for segment in decoded.iter().filter(|segment| !is_hallucination(&segment.text)) {
+        for segment in decoded.iter().filter(|segment| !is_hallucination(segment)) {
             let mut segment = convert(segment);
             segment.start += t0cs;
             segment.end += t0cs;
@@ -557,8 +566,21 @@ mod tests {
 
     #[test]
     fn made_up_subtitle_credits_are_hallucinations() {
-        assert!(is_hallucination(" Субтитрувальниця Оля Шор"));
-        assert!(!is_hallucination(" Добре, тоді переходимо до наступного пункту."));
+        let line = |text: &str, t0, t1| FullSegment {
+            t0,
+            t1,
+            text: text.to_string(),
+            no_speech_prob: 0.0,
+            tokens: Vec::new(),
+            speaker_turn_next: false,
+        };
+        assert!(is_hallucination(&line(" Субтитрувальниця Оля Шор", 0, 300)));
+        assert!(!is_hallucination(&line(" Добре, тоді переходимо до наступного пункту.", 0, 300)));
+        // A thank-you on a blip is made up; one that lasts, or one inside a sentence, was said.
+        assert!(is_hallucination(&line(" Дякую.", 58430, 58450)));
+        assert!(is_hallucination(&line(" Thank you!", 0, 70)));
+        assert!(!is_hallucination(&line(" Дякую.", 0, 120)));
+        assert!(!is_hallucination(&line(" Дякую, Таню.", 0, 60)));
     }
 
     #[test]
