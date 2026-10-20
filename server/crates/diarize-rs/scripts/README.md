@@ -13,6 +13,9 @@ implementation codes against.
 | `models/diar_streaming_sortformer_4spk-v2.nemo`                              | 471367680    | `b371afce2c4958186469df33d939936b9746c89f38b10a69cfd2c61254e83329` |
 | `models/diar_streaming_sortformer_4spk-v2.q8_0.gguf` (NVIDIA's, cross-check) | 147075776    | `0679cfeb1ce356d0dea9470b31274f4bfc7eb927497d82005483770666da998a` |
 | `models/diar_streaming_sortformer_4spk-v2.f32.gguf` (built here)             | 491094752    | `b867938b440b2a65f24ee511392fdac69bdcdb07c93390945ca4bdd86837a2e0` |
+| `baseline/models/Nemotron-3-Diarization.nemo` (v3)                           | 198676480    | `867c53f552998f772e5b5e5c082962ae85ee7ca5669c2bc17d7f615133d4e96d` |
+| `_app/data/Nemotron-3-Diarization.q8_0.gguf` (v3, NVIDIA's)                  | 107012128    | `08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1` |
+| `baseline/models/Nemotron-3-Diarization.f32.gguf` (v3, built here)           | 395298848    | `69902125f8549674981f7067b334d9d98a1e937b433376a0cc1a47c18a650b77` |
 
 Source model: <https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2> (CC-BY-4.0, not gated).
 Converter: <https://github.com/NVIDIA/NeMo-Speech.cpp> (Apache-2.0), commit
@@ -239,3 +242,15 @@ Numeric agreement, dequantizing both sides:
 
 No naming or shape drift was found. If a future converter commit produces a diff in the
 `### DIFF` section beyond `general.name` / `general.file_type`, treat it as a regression.
+
+## Nemotron-3-Diarization (v3)
+
+Source: <https://huggingface.co/nvidia/Nemotron-3-Diarization> (not gated). Run, from `crates/diarize-rs`:
+`scripts/fetch_v3.sh` (q8_0 -> app model dir, `.nemo` -> `baseline/models/`), `scripts/convert_v3.sh`
+(unmodified NeMo-Speech.cpp converter, clone in `baseline/NeMo-Speech.cpp`, commit
+`caa3f47c7c75fa2e9e6340272ebad57c1647dd44`, 2026-10-16), `scripts/cut_clip.py`, then
+`scripts/dump_v3_reference.py <wav> <name>` (transformers 5.18.0 `Nemotron3DiarizationProcessor` +
+`AutoModelForAudioFrameClassification`, CPU f32, offline; writes `baseline/probs` and `baseline/segments`).
+Inventory: [`tensors-v3.md`](./tensors-v3.md). f32 vs q8_0 diff: only `general.file_type` and `general.name`;
+tensor names/shapes identical (360 tensors, 57 KV). Note: audio.wav of the 2026-10-20 standup is silent
+until ~190 s, so `standup_60_120` has no speech (max prob 0.003); use `standup_200_260` for a real reference.
