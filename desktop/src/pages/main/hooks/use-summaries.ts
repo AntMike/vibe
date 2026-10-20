@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { m } from '~/paraglide/messages.js'
 import { appLanguageName, chunkLines, createClient, fillPrompt, inputBudgetBytes, utf8Bytes, type AiClient } from '~/lib/ai'
+import { isAutoProjectName, summaryProjectName } from '~/lib/project-name'
 import { asText } from '~/lib/transcript'
 import { usePreferenceProvider } from '~/providers/preference'
 import type { Job, TranscribeQueue } from './use-transcribe-queue'
@@ -125,6 +126,16 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 				text = text.trim()
 				if (!text) throw new Error(m.summaryFailed())
 				queue.setJobSummary(job.id, text)
+				// The first summary names an auto-named project; a regenerated one leaves the title alone.
+				if (!job.summary && isAutoProjectName(job.name)) {
+					void client
+						.ask(`Reply with only a 2-6 word title for this summary, in its language.\n\n"""\n${text}\n"""`)
+						.then((title) => {
+							const name = summaryProjectName(job.name, title)
+							if (name) void queue.renameJob(job.id, name, job.name)
+						})
+						.catch((error) => console.warn('summary title failed:', error))
+				}
 				return true
 			} catch (error) {
 				console.error('summarize failed:', error)

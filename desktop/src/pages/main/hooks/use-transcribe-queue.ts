@@ -130,8 +130,11 @@ export interface TranscribeQueue {
 	updateSegmentText: (jobId: string, segmentIndex: number, text: string) => void
 	/** Drop one segment, the way clearing a line in the editor does. Persists like the text edits. */
 	removeSegment: (jobId: string, segmentIndex: number) => void
-	/** Rename the visible project and its persisted record, when one exists. */
-	renameJob: (jobId: string, name: string) => Promise<boolean>
+	/**
+	 * Rename the visible project and its persisted record, when one exists. With `from`, only while
+	 * the title is still that, so a rename the user made meanwhile wins.
+	 */
+	renameJob: (jobId: string, name: string, from?: string) => Promise<boolean>
 	/** Update the visible title while the inline rename editor is open. */
 	previewJobName: (jobId: string, name: string) => void
 	/** Attach an AI summary to a job. Persists to the job's saved file when it has one. */
@@ -690,8 +693,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 
 			const created: Job[] = accepted.map((file) => ({
 				id: nextJobId(),
-				// A re-transcribed project keeps its own title: prefixing it again would grow
-				// "File-multi" into "File-File-multi" on every run.
+				// A re-transcribed project keeps its own title: building it again would stack
+				// another date onto it on every run.
 				name: file.projectName ?? autoProjectName(file.name, file.source ?? 'file'),
 				path: file.path,
 				source: file.source ?? 'file',
@@ -780,12 +783,12 @@ export function useTranscribeQueue(): TranscribeQueue {
 	)
 
 	const renameJob = useCallback(
-		async (jobId: string, name: string) => {
+		async (jobId: string, name: string, from?: string) => {
 			const next = name.trim()
 			if (!next) return false
 			return serializeProjectOperation(jobId, async () => {
 				const job = jobsRef.current.find((candidate) => candidate.id === jobId)
-				if (!job) return false
+				if (!job || (from !== undefined && job.name !== from)) return false
 				if (!job.savedPath) {
 					patch(jobId, { name: next })
 					return true

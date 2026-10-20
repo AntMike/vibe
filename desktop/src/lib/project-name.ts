@@ -2,13 +2,7 @@ import type { TranscriptExportContent } from './transcript-export'
 import type { ProjectSource } from './types'
 import { audioExtensions, videoExtensions } from './config'
 
-const sourcePrefixes: Record<ProjectSource, string> = {
-	record: 'Record-',
-	url: 'Url-',
-	file: 'File-',
-}
-
-// ponytail: ASCII like the source prefixes, so names stay stable across UI languages
+// ponytail: ASCII like the "record" label, so names stay stable across UI languages
 const contentSuffixes: Record<TranscriptExportContent, string> = {
 	transcript: '-transcript',
 	summary: '-summary',
@@ -23,9 +17,42 @@ function withoutMediaExtension(name: string): string {
 	return mediaExtensions.has(extension) ? name.slice(0, dot) : name
 }
 
-/** Build the default saved-project name. User-entered names never pass through this helper. */
-export function autoProjectName(name: string, source: ProjectSource = 'file'): string {
-	return `${sourcePrefixes[source]}${withoutMediaExtension(name)}`
+const pad = (value: number) => String(value).padStart(2, '0')
+
+function datePrefix(date: Date) {
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}-${pad(date.getMinutes())}`
+}
+
+/** The stem the recorder falls back to when the user gave no name: "2026-10-20 14-30-05 (1)". */
+const recorderTimeStem = /^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}(?: \(\d+\))?$/
+
+/**
+ * Build the default saved-project name: `<date>-<time>-<label>`. The label is the file name or link
+ * title, a recording's own name, or "record". User-entered names never pass through this helper.
+ */
+export function autoProjectName(name: string, source: ProjectSource = 'file', date = new Date()): string {
+	const stem = withoutMediaExtension(name.trim()).trim()
+	const label = !stem || (source === 'record' && recorderTimeStem.test(stem)) ? 'record' : stem
+	return `${datePrefix(date)}-${label}`
+}
+
+const autoNamePrefix = /^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-/
+
+/** Whether a title still has the shape `autoProjectName` gives it. */
+export const isAutoProjectName = (name: string) => autoNamePrefix.test(name)
+
+/** Swap the label of an auto-built name for a title taken from its summary; null when the name was the user's own. */
+export function summaryProjectName(name: string, title: string): string | null {
+	const prefix = name.match(autoNamePrefix)?.[0]
+	const label = title
+		.split('\n')[0]
+		.replace(/[#*_`"'«»“”]/g, '')
+		.replace(/^title:\s*/i, '')
+		.replace(/[.\s]+$/, '')
+		.trim()
+		.slice(0, 60)
+		.trim()
+	return prefix && label ? `${prefix}${label}` : null
 }
 
 /** Turn the visible project title into a safe, recognizable export filename; `content` tags what is inside. */

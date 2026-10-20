@@ -1,21 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { autoProjectName, projectExportFilename } from './project-name'
+import { autoProjectName, isAutoProjectName, projectExportFilename, summaryProjectName } from './project-name'
 
 describe('autoProjectName', () => {
-	it.each([
-		['record', 'capture.wav', 'Record-capture'],
-		['url', 'video-title.m4a', 'Url-video-title'],
-		['file', 'interview-final.mp3', 'File-interview-final'],
-	] as const)('uses the stable ASCII prefix for %s projects', (source, name, expected) => {
-		expect(autoProjectName(name, source)).toBe(expected)
-	})
+	const at = new Date(2026, 9, 20, 9, 5, 30)
 
-	it('defaults unannotated transcription inputs to files', () => {
-		expect(autoProjectName('meeting.wav')).toBe('File-meeting')
+	it.each([
+		['record', '2026-10-20 09-05-12.wav', '2026-10-20-09-05-record'],
+		['record', '2026-10-20 09-05-12 (2).wav', '2026-10-20-09-05-record'],
+		['record', 'Standup.wav', '2026-10-20-09-05-Standup'],
+		['record', '', '2026-10-20-09-05-record'],
+		['url', 'video-title.m4a', '2026-10-20-09-05-video-title'],
+		['file', 'interview-final.mp3', '2026-10-20-09-05-interview-final'],
+	] as const)('names %s projects from %s', (source, name, expected) => {
+		expect(autoProjectName(name, source, at)).toBe(expected)
 	})
 
 	it('preserves dots that are not supported media extensions', () => {
-		expect(autoProjectName('meeting.notes')).toBe('File-meeting.notes')
+		expect(autoProjectName('meeting.notes', 'file', at)).toBe('2026-10-20-09-05-meeting.notes')
+	})
+})
+
+describe('summaryProjectName', () => {
+	it('swaps the label for the summary title', () => {
+		expect(summaryProjectName('2026-10-20-09-05-record', '**"Q3 roadmap review."**\n')).toBe('2026-10-20-09-05-Q3 roadmap review')
+	})
+
+	it('leaves names the user chose', () => {
+		expect(isAutoProjectName('Team sync')).toBe(false)
+		expect(summaryProjectName('Team sync', 'Q3 roadmap')).toBeNull()
 	})
 })
 

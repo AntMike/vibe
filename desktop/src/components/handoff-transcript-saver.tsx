@@ -67,7 +67,7 @@ export default function HandoffTranscriptSaver() {
 			if (segments.length === 0) return
 
 			const sourcePath = payload.savedPath ?? payload.saved_path ?? ''
-			const name = autoProjectName(payload.name?.trim() || m.phoneRecording(), 'record')
+			const name = autoProjectName(payload.name ?? '', 'record')
 			// Same rule as a local transcription: auto-save only when the user asked for it.
 			if (!preferenceRef.current.saveTranscripts) return
 
