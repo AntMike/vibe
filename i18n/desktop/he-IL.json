@@ -39,7 +39,7 @@
 	"customizeInfo": "הורידו קובץ מודלים (ggml או gguf) עם סיומת .bin, העבירו לתיקיית המודלים ובחרו את הקובץ כאן מהתפריט הנפתח. אין צורך להפעיל מחדש! 🌟",
 	"dark": "כהה",
 	"diarizeThreshold": "סף זיהוי דוברים",
-	"diarizeMaxSpeakersNote": "תומך בזיהוי של עד 4 דוברים.",
+	"diarizeMaxSpeakersNote": "תומך בזיהוי של עד 8 דוברים.",
 	"diarization": "זיהוי דוברים",
 	"downloadFile": "הורד ותמלל",
 	"downloadModel": "הורד מודל",

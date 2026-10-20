@@ -29,29 +29,27 @@ export const modelUrls: Record<'default' | 'hebrew', ModelDownload[]> = {
 	hebrew: [{ url: 'https://huggingface.co/ivrit-ai/whisper-large-v3-turbo-ggml/resolve/main/ggml-model.bin' }],
 }
 
-export const embeddingModelFilename = 'wespeaker_en_voxceleb_CAM++.onnx'
-export const segmentModelFilename = 'segmentation-3.0.onnx'
-export const embeddingModelUrl = 'https://github.com/thewh1teagle/vibe/releases/download/v0.0.1/wespeaker_en_voxceleb_CAM++.onnx'
-export const segmentModelUrl = 'https://github.com/thewh1teagle/vibe/releases/download/v0.0.1/segmentation-3.0.onnx'
-
 /**
- * Diarization runs NVIDIA Sortformer on ggml now, not ONNX Runtime, so this is a GGUF built from
- * the original `.nemo` checkpoint rather than an ONNX export. Q8_0: the k-quant tiers are unsafe
- * for this model — its speaker-cache compression makes discrete near-tie decisions that quant
- * error can flip, permuting speaker labels mid-stream.
+ * Diarization runs NVIDIA Nemotron 3 Diarization (Sortformer v3) on ggml: up to 8 speakers, overlap
+ * included, at 10 ms. NVIDIA's own q8_0 GGUF (`nvidia/Nemotron-3-Diarization`, OpenMDW-1.1). Q8_0:
+ * the k-quant tiers are unsafe for Sortformer — its speaker-cache compression makes near-tie
+ * decisions that quant error can flip, permuting speaker labels mid-stream.
  *
- * Mirrored into the vibe-app org from `nvidia/diar_streaming_sortformer_4spk-v2` (cc-by-4.0).
- *
- * Anyone upgrading still has the old `.onnx` sitting in their models folder. Nothing reads it any
- * more and it is not a `.gguf`/`.bin`, so it stays invisible to the model listing; the gate simply
- * finds this file missing and offers the download. Deleting the stale 492 MB file is left to them.
+ * On 26 recorded calls of 9-12 people it scores 23.9% DER against the call's own speaker turns,
+ * where the 4-speaker Sortformer v2 it replaces scored 53.5% (scripts/diar-eval).
  */
-export const diarizeModelFilename = 'diar_streaming_sortformer_4spk-v2.q8_0.gguf'
-export const diarizeModelUrl = 'https://huggingface.co/vibe-app/diar-streaming-sortformer-4spk-v2-gguf/resolve/main/diar_streaming_sortformer_4spk-v2.q8_0.gguf'
+export const diarizeModelFilename = 'Nemotron-3-Diarization.q8_0.gguf'
+export const diarizeModelUrl = 'https://huggingface.co/nvidia/Nemotron-3-Diarization/resolve/main/Nemotron-3-Diarization.q8_0.gguf'
 export const diarizeModelIntegrity: ModelIntegrity = {
-	size: 147075776,
-	sha256: '0679cfeb1ce356d0dea9470b31274f4bfc7eb927497d82005483770666da998a',
+	size: 107012128,
+	sha256: '08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1',
 }
+/**
+ * Diarization models earlier versions downloaded. Nothing reads them, but they sit in the models
+ * folder and the GGUF one would otherwise list as a transcription model; deleting them is left to
+ * the user.
+ */
+export const retiredDiarizeModelFilenames = ['diar_streaming_sortformer_4spk-v2.q8_0.gguf', 'wespeaker_en_voxceleb_CAM++.onnx', 'segmentation-3.0.onnx']
 export const vadModelFilename = 'ggml-silero-v6.2.0.bin'
 export const vadModelUrl = 'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin'
 

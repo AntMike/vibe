@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { withoutUnsupportedOptions, type ModelCapabilities } from './model'
+import { isAuxiliaryModelFile, withoutUnsupportedOptions, type ModelCapabilities } from './model'
 
 const whisper: ModelCapabilities = {
 	engine: 'whisper',
@@ -29,5 +29,13 @@ describe('withoutUnsupportedOptions', () => {
 	it('leaves the options alone when no capabilities are known yet', () => {
 		expect(withoutUnsupportedOptions(options, null)).toEqual(options)
 		expect(withoutUnsupportedOptions(options, undefined)).toBe(options)
+	})
+})
+
+describe('isAuxiliaryModelFile', () => {
+	it('hides the diarizer and the ones it replaced from the transcription models', () => {
+		expect(isAuxiliaryModelFile('Nemotron-3-Diarization.q8_0.gguf')).toBe(true)
+		expect(isAuxiliaryModelFile('diar_streaming_sortformer_4spk-v2.q8_0.gguf')).toBe(true)
+		expect(isAuxiliaryModelFile('ggml-large-v3.bin')).toBe(false)
 	})
 })
