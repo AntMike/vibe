@@ -50,6 +50,8 @@ export interface EnqueueItem extends NamedPath {
 	projectName?: string
 	/** The transcript being redone: its speaker names and call speakers carry over to the new one. */
 	previous?: PreviousTranscript
+	/** Record of the project being redone: the result overwrites it in place instead of saving a new project. */
+	savedPath?: string
 }
 
 export type PreviousTranscript = Pick<TranscriptRecord, 'segments' | 'speakerNames' | 'callSpeakers'>
@@ -616,7 +618,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 						void serializeProjectOperation(next.id, async () => {
 							const savedPath = jobsRef.current.find((candidate) => candidate.id === next.id)?.savedPath
 							if (!savedPath || !(await updateTranscriptSegments(savedPath, segments))) return
-							if (fromCall) await updateTranscriptSpeakerNames(savedPath, fromCall.speakerNames)
+							// A redo replaces the old names too: they belong to the old run's speaker numbers.
+							if (fromCall || next.previous) await updateTranscriptSpeakerNames(savedPath, speakerNames ?? {})
 							notifyTranscriptsChanged()
 						})
 					} else {
@@ -758,6 +761,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 				segments: [],
 				previous: file.previous,
 				callSpeakers: file.previous?.callSpeakers,
+				savedPath: file.savedPath,
 			}))
 			commit([...jobsRef.current, ...created])
 			if (!selectedIdRef.current) select(created[0].id)

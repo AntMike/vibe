@@ -213,7 +213,7 @@ function RecentRow({
 
 	function retranscribe() {
 		if (!menu.sourcePath || !menu.sourceExists) return
-		queue.enqueue([{ name: entry.name, path: menu.sourcePath, projectName: entry.name, previous: menu.previous }])
+		queue.enqueue([{ name: entry.name, path: menu.sourcePath, projectName: entry.name, previous: menu.previous, savedPath: entry.path }])
 	}
 
 	async function commitRename() {
@@ -399,7 +399,8 @@ export default function RecentsSidebar() {
 
 	// Jobs of the open session that the store does not know about yet (still queued, running, or
 	// finished with saving switched off) — without them a new transcription looks like it went nowhere.
-	const liveJobs = useMemo(() => queue.jobs.filter((job) => !job.savedPath && !job.hydrated), [queue.jobs])
+	// A re-transcribe already has its record, so it shows here only until it is done.
+	const liveJobs = useMemo(() => queue.jobs.filter((job) => !job.hydrated && (!job.savedPath || job.status !== 'done')), [queue.jobs])
 
 	const filtered = useMemo(() => {
 		const needle = query.trim().toLowerCase()
