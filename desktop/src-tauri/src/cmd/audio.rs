@@ -221,6 +221,15 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
         #[cfg(windows)]
         if let (false, Some((app, pid))) = (is_input, call_app) {
             use tauri::Manager;
+            let token_file = app_handle.path().app_local_data_dir()?.join("teams_api_token.txt");
+            // Only Teams and Slack expose a mute state; for anything else the mic just records.
+            mute_watch = app.map(|app| crate::call_capture::start_mute_watch(app, pid, token_file));
+            speaker_watch = app.and_then(|app| crate::call_capture::start_speaker_watch(app, pid, recording_started));
+        }
+        // New Teams plays calls from its SlimCore module, which process loopback hears as silence:
+        // the whole call came out mic-only. Record the output device for it instead.
+        #[cfg(windows)]
+        if let (false, Some((app, pid))) = (is_input, call_app.filter(|(app, _)| *app != Some(crate::call_capture::CallApp::Teams))) {
             tracing::info!("Recording only pid {pid} ({app:?}) instead of {}", device.name);
             let path = get_vibe_temp_folder().join(format!("{}.wav", random_string(10)));
             wav_paths.push((path.clone(), 0));
@@ -239,10 +248,6 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
                 write_input_data::<f32, f32>(samples, &writer, &loudness);
             });
             stream_handles.push(Arc::new(Mutex::new(Some(StreamHandle(Capture::App(worker))))));
-            let token_file = app_handle.path().app_local_data_dir()?.join("teams_api_token.txt");
-            // Only Teams and Slack expose a mute state; for anything else the mic just records.
-            mute_watch = app.map(|app| crate::call_capture::start_mute_watch(app, pid, token_file));
-            speaker_watch = app.and_then(|app| crate::call_capture::start_speaker_watch(app, pid, recording_started));
             continue;
         }
         let (device, config) = if is_input {

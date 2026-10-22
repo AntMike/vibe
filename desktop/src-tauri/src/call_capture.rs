@@ -1,7 +1,8 @@
 //! Windows-only: record just the call app (Teams or Slack) instead of every sound the PC
 //! plays, and keep the mic track silent while the call app says you're muted.
 //!
-//! - Call audio: WASAPI process loopback on the app's process tree.
+//! - Call audio: WASAPI process loopback on the app's process tree. Not Teams: its SlimCore
+//!   module plays calls where process loopback only hears silence, so Teams gets the device.
 //! - Teams mute: the local "third-party app API" websocket (Teams settings → Privacy →
 //!   Manage API → on). Pair once, in a solo "Meet now", by clicking Allow in Teams.
 //! - Slack mute: UI Automation, reading the huddle mic button's label.
