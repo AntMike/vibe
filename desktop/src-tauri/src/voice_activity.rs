@@ -112,8 +112,9 @@ fn cut_out(turn: &SpeakerTurn, cuts: &[(f64, f64)]) -> Vec<SpeakerTurn> {
 
 /// The call app's turns, corrected with what the tracks heard. You are whoever the call showed
 /// talking most while only the mic had speech; your turns become exactly those stretches, and
-/// they are cut out of everyone else's. Unchanged when there are no turns to name you from.
-pub fn refine_turns(turns: Vec<SpeakerTurn>, mic: &[f32], call: &[f32]) -> Vec<SpeakerTurn> {
+/// they are cut out of everyone else's. A call app that shows nobody (Teams, a browser): your
+/// mic-only stretches alone, as `you`.
+pub fn refine_turns(turns: Vec<SpeakerTurn>, mic: &[f32], call: &[f32], you: &str) -> Vec<SpeakerTurn> {
     let (mic, call) = (speaking(mic), speaking(call));
     let only_mic: Vec<bool> = (0..mic.len())
         .map(|i| mic[i] && !call.get(i).copied().unwrap_or(false))
@@ -130,7 +131,7 @@ pub fn refine_turns(turns: Vec<SpeakerTurn>, mic: &[f32], call: &[f32]) -> Vec<S
     }
     let total: f64 = by_name.iter().map(|(_, seconds)| seconds).sum();
     let Some((me, seconds)) = by_name.into_iter().max_by(|a, b| a.1.total_cmp(&b.1)) else {
-        return turns;
+        return mine.iter().map(|&(start, end)| SpeakerTurn { start, end, name: you.to_string() }).collect();
     };
     if seconds <= total / 2.0 {
         return turns;
@@ -191,7 +192,7 @@ mod tests {
         let mic = track(15.0, &[(0.0, 5.0), (12.0, 13.0)]);
         let call = track(15.0, &[(5.0, 12.0)]);
         let turns = vec![turn(0.5, 6.0, "Mike"), turn(6.0, 13.0, "Serhii")];
-        let refined = refine_turns(turns, &mic, &call);
+        let refined = refine_turns(turns, &mic, &call, "Me");
         let rounded: Vec<(f64, f64, &str)> = refined
             .iter()
             .map(|t| {
@@ -206,11 +207,21 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_without_turns_or_without_mic_speech() {
+    fn unchanged_without_mic_speech() {
         let mic = track(5.0, &[(0.0, 5.0)]);
         let quiet = track(5.0, &[]);
-        assert!(refine_turns(vec![], &mic, &quiet).is_empty());
+        assert!(refine_turns(vec![], &quiet, &mic, "Me").is_empty());
         let turns = vec![turn(0.0, 5.0, "Serhii")];
-        assert_eq!(refine_turns(turns.clone(), &quiet, &mic), turns);
+        assert_eq!(refine_turns(turns.clone(), &quiet, &mic, "Me"), turns);
+    }
+
+    #[test]
+    fn without_turns_mic_only_speech_is_you() {
+        // Teams shows nobody: you talk 0-3 s, the call 4-8 s, both at once 9-10 s.
+        let mic = track(10.0, &[(0.0, 3.0), (9.0, 10.0)]);
+        let call = track(10.0, &[(4.0, 8.0), (9.0, 10.0)]);
+        let refined = refine_turns(vec![], &mic, &call, "Mike Antoniv");
+        let rounded: Vec<(f64, f64, &str)> = refined.iter().map(|t| (t.start.round(), t.end.round(), t.name.as_str())).collect();
+        assert_eq!(rounded, vec![(0.0, 3.0, "Mike Antoniv")]);
     }
 }

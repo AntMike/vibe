@@ -84,6 +84,20 @@ impl StreamHandle {
     }
 }
 
+/// Your name as Windows shows it ("Mike Antoniv"), else the login name: who the mic-only speech is.
+fn your_name() -> String {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Security::Authentication::Identity::{GetUserNameExW, NameDisplay};
+        let mut buffer = [0u16; 256];
+        let mut len = buffer.len() as u32;
+        if unsafe { GetUserNameExW(NameDisplay, Some(windows::core::PWSTR(buffer.as_mut_ptr())), &mut len) } && len > 0 {
+            return String::from_utf16_lossy(&buffer[..len as usize]);
+        }
+    }
+    std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "Me".into())
+}
+
 /// True while the call app (Teams/Slack) reports you as muted: the mic track gets silence.
 fn mic_muted() -> bool {
     #[cfg(windows)]
@@ -317,7 +331,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
             stream_loudness[index].lock().ok().map(|loudness| loudness.frames().to_vec())
         };
         let speakers = json!(match (frames(true), frames(false)) {
-            (Some(mic), Some(call)) => voice_activity::refine_turns(turns, &mic, &call),
+            (Some(mic), Some(call)) => voice_activity::refine_turns(turns, &mic, &call, &your_name()),
             _ => turns,
         });
 
