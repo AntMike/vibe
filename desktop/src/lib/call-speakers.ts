@@ -54,11 +54,15 @@ function majority(byName: Map<string, number>, minSeconds = 0): string | undefin
 export function speakersFromCall(segments: Segment[], turns: CallSpeakerTurn[]): { segments: Segment[]; speakerNames: SpeakerNames } {
 	const overlaps = segments.map((segment) => overlapByName(segment, turns))
 	const bySpeaker = new Map<number, Map<string, number>>()
+	// Seconds each diarized speaker talked: a name must cover half of it, not just beat the other
+	// names — a Teams call shows only you, and would otherwise name everyone who ever talked over you.
+	const spoken = new Map<number, number>()
 	segments.forEach((segment, i) => {
 		if (segment.speaker == null) return
 		const total = bySpeaker.get(segment.speaker) ?? new Map<string, number>()
 		for (const [name, seconds] of overlaps[i]) total.set(name, (total.get(name) ?? 0) + seconds)
 		bySpeaker.set(segment.speaker, total)
+		spoken.set(segment.speaker, (spoken.get(segment.speaker) ?? 0) + (segment.stop - segment.start) / 100)
 	})
 
 	// One index per person and per diarized speaker nobody could be matched to, in order of appearance.
@@ -74,7 +78,7 @@ export function speakersFromCall(segments: Segment[], turns: CallSpeakerTurn[]):
 	}
 	const named = segments.map((segment, i) => {
 		const minSeconds = ((segment.stop - segment.start) / 100) * MIN_COVERAGE
-		const name = majority(overlaps[i], minSeconds) ?? (segment.speaker != null ? majority(bySpeaker.get(segment.speaker)!) : undefined)
+		const name = majority(overlaps[i], minSeconds) ?? (segment.speaker != null ? majority(bySpeaker.get(segment.speaker)!, spoken.get(segment.speaker)! / 2) : undefined)
 		if (name) return { ...segment, speaker: indexOf(`name:${name}`, name) }
 		if (segment.speaker != null) return { ...segment, speaker: indexOf(`speaker:${segment.speaker}`) }
 		return segment

@@ -24,6 +24,14 @@ describe('speakersFromCall', () => {
 		expect(segments.map((s) => s.speaker)).toEqual([0, 0, 1, undefined])
 		expect(speakerNames).toEqual({ 0: 'Alex' })
 	})
+
+	it('names a diarized speaker only when the call covers most of its talk', () => {
+		// Teams shows only you: speaker 1 crosses your turn for 1 of its 20 s, and stays unnamed.
+		const mine = [{ start: 0, end: 10, name: 'Mike' }]
+		const { segments, speakerNames } = speakersFromCall([segment(0, 9, 0), segment(9, 19, 1), segment(30, 40, 1)], mine)
+		expect(segments.map((s) => s.speaker)).toEqual([0, 1, 1])
+		expect(speakerNames).toEqual({ 0: 'Mike' })
+	})
 })
 
 describe('parseCallSpeakers', () => {
