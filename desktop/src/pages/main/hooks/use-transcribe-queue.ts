@@ -26,6 +26,7 @@ import { vocabularyPath } from '~/lib/vocabulary'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
 	notifyTranscriptsChanged,
+	readTranscript,
 	renameTranscript,
 	saveTranscript,
 	updateTranscriptSegments,
@@ -244,6 +245,18 @@ export async function reconcileProjectName(
  * One sequential transcription queue: the model is loaded once, then every queued file runs
  * in order. Segments of the currently running file stream in live through `new_segment`.
  */
+/**
+ * Where late work for a job goes — an AI reply that lands after the user moved on: the job itself
+ * while it is open, else the open job showing the same project file (closed and opened again),
+ * else only that file on disk.
+ */
+export function findJobTarget(jobs: Job[], savedPaths: Map<string, string>, jobId: string): { job?: Job; savedPath?: string } {
+	const job = jobs.find((candidate) => candidate.id === jobId)
+	if (job) return { job, savedPath: job.savedPath }
+	const savedPath = savedPaths.get(jobId)
+	return { job: savedPath ? jobs.find((candidate) => candidate.savedPath === savedPath) : undefined, savedPath }
+}
+
 export function useTranscribeQueue(): TranscribeQueue {
 	const preference = usePreferenceProvider()
 	const preferenceRef = useRef(preference)
@@ -251,6 +264,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 
 	const [jobs, setJobs] = useState<Job[]>([])
 	const jobsRef = useRef<Job[]>([])
+	/** Last project file of every job this session, kept past a reset for `findJobTarget`. */
+	const savedPathsRef = useRef(new Map<string, string>())
 	const [activeId, setActiveId] = useState<string | null>(null)
 	const activeIdRef = useRef<string | null>(null)
 	const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -273,6 +288,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 
 	const commit = useCallback((next: Job[]) => {
 		jobsRef.current = next
+		for (const job of next) if (job.savedPath) savedPathsRef.current.set(job.id, job.savedPath)
 		setJobs(next)
 	}, [])
 
@@ -305,6 +321,18 @@ export function useTranscribeQueue(): TranscribeQueue {
 		})
 		return current
 	}, [])
+
+	const target = useCallback((jobId: string) => findJobTarget(jobsRef.current, savedPathsRef.current, jobId), [])
+
+	/** A closed project's file, one write at a time and at the path it has by the time the write runs. */
+	const writeClosed = useCallback(
+		(jobId: string, write: (savedPath: string) => Promise<unknown>) =>
+			serializeProjectOperation(jobId, async () => {
+				const savedPath = savedPathsRef.current.get(jobId)
+				if (savedPath) await write(savedPath)
+			}),
+		[serializeProjectOperation],
+	)
 
 	useEffect(() => {
 		const unlisteners: Promise<UnlistenFn>[] = []
@@ -486,7 +514,8 @@ export function useTranscribeQueue(): TranscribeQueue {
 						options.languageMode,
 						options.spokenLanguages,
 						// A fixed language needs no allow-list: detecting is only for auto.
-						(options.modelMetadata?.capabilities.language_detection ?? false) && (!options.modelOptions.lang || options.modelOptions.lang === 'auto'),
+						(options.modelMetadata?.capabilities.language_detection ?? false) &&
+							(!options.modelOptions.lang || options.modelOptions.lang === 'auto'),
 						(message) => toast.warning(m.languageDetectionFailed({ message }), { position: 'bottom-center', duration: 8000 }),
 						turns,
 					)
@@ -833,14 +862,20 @@ export function useTranscribeQueue(): TranscribeQueue {
 
 	const fixSegments = useCallback(
 		(jobId: string, fixes: Replacement[]) => {
-			const job = jobsRef.current.find((candidate) => candidate.id === jobId)
-			if (!job) return
+			const { job } = target(jobId)
+			if (!job) {
+				void writeClosed(jobId, async (path) => {
+					const record = await readTranscript(path)
+					if (record) await updateTranscriptSegments(path, applyReplacements(record.segments, fixes))
+				})
+				return
+			}
 			const segments = applyReplacements(job.segments, fixes)
 			if (segments.every((segment, index) => segment === job.segments[index])) return
-			commit(jobsRef.current.map((candidate) => (candidate.id === jobId ? { ...candidate, segments } : candidate)))
+			commit(jobsRef.current.map((candidate) => (candidate.id === job.id ? { ...candidate, segments } : candidate)))
 			if (job.savedPath) void updateTranscriptSegments(job.savedPath, segments)
 		},
-		[commit],
+		[commit, target, writeClosed],
 	)
 
 	const setSegmentSpeaker = useCallback(
@@ -859,17 +894,32 @@ export function useTranscribeQueue(): TranscribeQueue {
 		async (jobId: string, name: string, from?: string) => {
 			const next = name.trim()
 			if (!next) return false
-			return serializeProjectOperation(jobId, async () => {
-				const job = jobsRef.current.find((candidate) => candidate.id === jobId)
+			const open = target(jobId).job
+			if (!open) {
+				let renamed = false
+				await writeClosed(jobId, async (path) => {
+					const record = await readTranscript(path)
+					if (!record || (from !== undefined && record.name !== from)) return
+					const entry = await renameTranscript(path, next)
+					if (!entry) return
+					savedPathsRef.current.set(jobId, entry.path)
+					notifyTranscriptsChanged()
+					renamed = true
+				})
+				return renamed
+			}
+			const id = open.id
+			return serializeProjectOperation(id, async () => {
+				const job = jobsRef.current.find((candidate) => candidate.id === id)
 				if (!job || (from !== undefined && job.name !== from)) return false
 				if (!job.savedPath) {
-					patch(jobId, { name: next })
+					patch(id, { name: next })
 					return true
 				}
 				const renamed = await renameTranscript(job.savedPath, next)
 				if (!renamed) return false
-				const latest = jobsRef.current.find((candidate) => candidate.id === jobId)
-				patch(jobId, {
+				const latest = jobsRef.current.find((candidate) => candidate.id === id)
+				patch(id, {
 					...(latest?.name === job.name || latest?.name === next ? { name: next } : {}),
 					savedPath: renamed.path,
 					path: renamed.mediaPath ?? job.path,
@@ -878,7 +928,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 				return true
 			})
 		},
-		[patch, serializeProjectOperation],
+		[patch, serializeProjectOperation, target, writeClosed],
 	)
 
 	const previewJobName = useCallback((jobId: string, name: string) => patch(jobId, { name }), [patch])
@@ -886,22 +936,23 @@ export function useTranscribeQueue(): TranscribeQueue {
 	/** Same fire-and-forget write-back as the segment edits: the screen must not wait on the disk. */
 	const setJobSummary = useCallback(
 		(jobId: string, summary: string) => {
-			const job = jobsRef.current.find((candidate) => candidate.id === jobId)
-			if (!job || job.summary === summary) return
-			commit(jobsRef.current.map((candidate) => (candidate.id === jobId ? { ...candidate, summary } : candidate)))
+			const { job } = target(jobId)
+			if (!job) return void writeClosed(jobId, (path) => updateTranscriptSummary(path, summary))
+			if (job.summary === summary) return
+			commit(jobsRef.current.map((candidate) => (candidate.id === job.id ? { ...candidate, summary } : candidate)))
 			if (job.savedPath) void updateTranscriptSummary(job.savedPath, summary)
 		},
-		[commit],
+		[commit, target, writeClosed],
 	)
 
 	const setJobThread = useCallback(
 		(jobId: string, thread: AiThreadEntry[]) => {
-			const job = jobsRef.current.find((candidate) => candidate.id === jobId)
-			if (!job) return
-			commit(jobsRef.current.map((candidate) => (candidate.id === jobId ? { ...candidate, thread } : candidate)))
+			const { job } = target(jobId)
+			if (!job) return void writeClosed(jobId, (path) => updateTranscriptThread(path, thread))
+			commit(jobsRef.current.map((candidate) => (candidate.id === job.id ? { ...candidate, thread } : candidate)))
 			if (job.savedPath) void updateTranscriptThread(job.savedPath, thread)
 		},
-		[commit],
+		[commit, target, writeClosed],
 	)
 
 	const setSpeakerName = useCallback(
@@ -942,7 +993,10 @@ export function useTranscribeQueue(): TranscribeQueue {
 					noGpu: current.noGpu || gpuOutOfMemoryBefore(current.modelPath),
 					unloadTimeoutMinutes: current.unloadTimeoutMinutes,
 				})
-				const options = { ...withoutUnsupportedOptions(current.modelOptions, current.modelMetadata?.capabilities), ...(await buildSharedOptions(current)) }
+				const options = {
+					...withoutUnsupportedOptions(current.modelOptions, current.modelMetadata?.capabilities),
+					...(await buildSharedOptions(current)),
+				}
 				const heard = await decodeSpeaker(job.path, job.segments, speaker, language, options)
 				// Merged into the lines as they are now: an edit made while it decoded stays.
 				const latest = jobsRef.current.find((candidate) => candidate.id === jobId)

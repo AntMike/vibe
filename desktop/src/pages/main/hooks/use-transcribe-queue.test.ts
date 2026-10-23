@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from 'vitest'
-import { reconcileProjectName } from './use-transcribe-queue'
+import { findJobTarget, reconcileProjectName, type Job } from './use-transcribe-queue'
 
 describe('project name reconciliation', () => {
 	it('keeps reconciling when the live title changes during a slow rename', async () => {
@@ -28,5 +28,20 @@ describe('project name reconciliation', () => {
 			recordPath: '/projects/Final title/transcript.vibe.json',
 			mediaPath: '/projects/Final title/audio.wav',
 		})
+	})
+})
+
+describe('late work target', () => {
+	const job = (id: string, savedPath?: string) => ({ id, savedPath }) as Job
+	const saved = new Map([['old', '/projects/A/transcript.vibe.json']])
+
+	it('prefers the open job, then the reopened copy of its project, then the file alone', () => {
+		expect(findJobTarget([job('old', '/x')], saved, 'old').job?.id).toBe('old')
+		expect(findJobTarget([job('new', '/projects/A/transcript.vibe.json')], saved, 'old').job?.id).toBe('new')
+		expect(findJobTarget([job('other', '/projects/B/transcript.vibe.json')], saved, 'old')).toEqual({
+			job: undefined,
+			savedPath: '/projects/A/transcript.vibe.json',
+		})
+		expect(findJobTarget([], saved, 'unknown')).toEqual({ job: undefined, savedPath: undefined })
 	})
 })
