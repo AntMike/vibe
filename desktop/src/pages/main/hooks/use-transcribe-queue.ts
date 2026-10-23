@@ -128,6 +128,8 @@ export interface TranscribeQueue {
 	isAborting: boolean
 	hasResults: boolean
 	selectJob: (id: string) => void
+	/** The open job a job's late work shows on: itself, or its project opened again under a new id. */
+	liveJobId: (jobId: string) => string | undefined
 	enqueue: (files: EnqueueItem[]) => void
 	/** Transcribe the media already attached to a hydrated project with no transcript. */
 	transcribeJob: (jobId: string) => void
@@ -323,6 +325,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 	}, [])
 
 	const target = useCallback((jobId: string) => findJobTarget(jobsRef.current, savedPathsRef.current, jobId), [])
+	const liveJobId = useCallback((jobId: string) => target(jobId).job?.id, [target])
 
 	/** A closed project's file, one write at a time and at the path it has by the time the write runs. */
 	const writeClosed = useCallback(
@@ -1052,6 +1055,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 		isAborting,
 		hasResults,
 		selectJob,
+		liveJobId,
 		enqueue,
 		transcribeJob,
 		hydrate,

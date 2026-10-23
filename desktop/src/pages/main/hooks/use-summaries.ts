@@ -286,5 +286,21 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 
 	const clearShowSummary = useCallback(() => setShowSummary(null), [])
 
-	return { enabled, pending, drafts, progress, errors, summarize, ask, answerDrafts, asking, removeThreadEntry, showSummary, clearShowSummary }
+	// A project closed and opened again mid-reply is a new job; its spinner and streaming text move to it.
+	const { jobs, liveJobId } = queue
+	const live = useMemo(() => {
+		const rekey = <T>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).map(([id, value]) => [liveJobId(id) ?? id, value]))
+		return {
+			pending: rekey(pending),
+			drafts: rekey(drafts),
+			progress: rekey(progress),
+			errors: rekey(errors),
+			answerDrafts: rekey(answerDrafts),
+			asking: rekey(asking),
+			showSummary: showSummary && (liveJobId(showSummary) ?? showSummary),
+		}
+		// `jobs` is not read here, but a reopened project changes what `liveJobId` answers.
+	}, [jobs, liveJobId, pending, drafts, progress, errors, answerDrafts, asking, showSummary])
+
+	return { enabled, ...live, summarize, ask, removeThreadEntry, clearShowSummary }
 }

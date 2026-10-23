@@ -15,9 +15,12 @@ export default function SessionView() {
 	const multiple = queue.jobs.length > 1
 	const selected = queue.selectedJob
 
+	// A project opened again while its summary is still being written opens on it.
+	const summarizing = Boolean(queue.selectedId && summaries.pending[queue.selectedId])
 	useEffect(() => {
 		setQuery('')
-		setTab('transcript')
+		setTab(summarizing ? 'summary' : 'transcript')
+		// Only on opening another job: the summary finishing must not flip the tab back.
 	}, [queue.selectedId])
 
 	// A summary that starts, by hand or on its own, opens its tab once so the text is seen arriving.
