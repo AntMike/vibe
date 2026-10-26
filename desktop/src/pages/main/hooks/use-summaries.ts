@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { m } from '~/paraglide/messages.js'
-import { appLanguageName, chunkLines, createClient, fillPrompt, inputBudgetBytes, utf8Bytes, type AiClient } from '~/lib/ai'
+import { appLanguageName, chunkLines, createClient, fillPrompt, inputBudgetBytes, spokenLanguageRule, utf8Bytes, type AiClient } from '~/lib/ai'
 import { FIXES_INSTRUCTION, splitFixes, withoutFixes } from '~/lib/hints'
 import { isAutoProjectName, summaryProjectName } from '~/lib/project-name'
 import type { Replacement } from '~/lib/spelling'
@@ -133,7 +133,9 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 				const values = { language: appLanguageName(), speakers: speakersOf(job) }
 				// Every call that reads the transcript also lists what was misheard in it; the call
 				// summarizing the parts reads only summaries, so it is not asked.
-				const withFixes = (transcript: string) => `${fillPrompt(template, { ...values, transcript })}\n\n${FIXES_INSTRUCTION}`
+				const rule = spokenLanguageRule(template, job.segments)
+				const withRule = (transcript: string) => [fillPrompt(template, { ...values, transcript }), rule].filter(Boolean).join('\n\n')
+				const withFixes = (transcript: string) => `${withRule(transcript)}\n\n${FIXES_INSTRUCTION}`
 				const chunks = chunkLines(transcriptOf(job).split('\n'), withFixes(''), connection.contextTokens)
 				const fixes: Replacement[] = []
 				let final = withFixes(chunks[0])
@@ -146,7 +148,7 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 						fixes.push(...part.fixes)
 					}
 					setProgressFor(job.id, { done: chunks.length, total: chunks.length })
-					final = fillPrompt(template, { ...values, transcript: joinParts(parts) })
+					final = withRule(joinParts(parts))
 				}
 				let reply = ''
 				await client.stream(final, (token) => {

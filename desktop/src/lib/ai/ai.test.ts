@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_AI, migrateLegacy, modernizePrompt, presetPrompt, withCurrentPresets } from './config'
 import { chunkLines, createClient, fillPrompt, inputBudgetBytes, testConnection } from './client'
+import { spokenLanguageRule } from './language'
 
 const fetchMock = vi.fn()
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: (...args: unknown[]) => fetchMock(...args) }))
@@ -116,5 +117,21 @@ describe('createClient', () => {
 		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ content: [{ text: 'OK' }] }) })
 		const result = await testConnection(DEFAULT_AI.connection)
 		expect(result).toMatchObject({ ok: true, reply: 'OK' })
+	})
+})
+
+describe('spokenLanguageRule', () => {
+	const said = (seconds: number, language: string) => ({ start: 0, stop: seconds * 100, language })
+
+	it('names the language spoken most', () => {
+		expect(spokenLanguageRule('Підсумуй: {transcript}', [said(600, 'en'), said(30, 'uk')])).toContain('Write the whole summary in English')
+	})
+
+	it('leaves a prompt that picks its own language alone', () => {
+		expect(spokenLanguageRule('Translate into {language}: {transcript}', [said(600, 'en')])).toBe('')
+	})
+
+	it('says nothing when no language was detected', () => {
+		expect(spokenLanguageRule('{transcript}', [{ start: 0, stop: 600 }])).toBe('')
 	})
 })
