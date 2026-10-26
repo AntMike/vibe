@@ -25,6 +25,19 @@ describe('speakersFromCall', () => {
 		expect(speakerNames).toEqual({ 0: 'Alex' })
 	})
 
+	it('gives a handover to the voice heard, though the call ring still shows the one before', () => {
+		// Olena answers at 18.8, but the ring moves to her only at 20.4: her "Hi." sits in Alex's turn.
+		const lagging = [
+			{ start: 0, end: 20.4, name: 'Alex' },
+			{ start: 20.4, end: 30, name: 'Olena' },
+			{ start: 30, end: 40, name: 'Alex' },
+			{ start: 40, end: 50, name: 'Olena' },
+		]
+		const lines = [segment(0, 10, 0), segment(11, 18.6, 0), segment(18.8, 19.1, 1), segment(19.1, 29.5, 1), segment(28.5, 38, 0), segment(40.5, 49, 1)]
+		const { segments, speakerNames } = speakersFromCall(lines, lagging)
+		expect(segments.map((s) => speakerNames[s.speaker!])).toEqual(['Alex', 'Alex', 'Olena', 'Olena', 'Alex', 'Olena'])
+	})
+
 	it('names a diarized speaker only when the call covers most of its talk', () => {
 		// Teams shows only you: speaker 1 crosses your turn for 1 of its 20 s, and stays unnamed.
 		const mine = [{ start: 0, end: 10, name: 'Mike' }]

@@ -23,17 +23,31 @@ export function parseCallSpeakers(value: unknown): CallSpeakerTurn[] | undefined
 
 /** A sentence the call can place needs its best match to cover at least this share of it. */
 const MIN_COVERAGE = 0.2
+/** Seconds the call app's active-speaker ring can trail the voice: Slack huddles ran 0.2-2.2 s behind. */
+// ponytail: calibration knobs, measured on the Oct 2026 huddles; tune here if voices and the call disagree.
+const MAX_LAG = 2
+/** Share of a sentence the call must give its pick away from the lagging end of a turn, to overrule the voice. */
+const SURE = 0.75
+/** How many times more of the diarized speaker's talk the voice's person must hold than the call's pick. */
+const VOICE_ODDS = 5
 
 /** Seconds each name was shown talking during a segment (segment times are centiseconds). */
-function overlapByName(segment: Segment, turns: CallSpeakerTurn[]): Map<string, number> {
+function overlapByName(segment: Segment, turns: CallSpeakerTurn[], lag = 0): Map<string, number> {
 	const start = segment.start / 100
-	const stop = segment.stop / 100
+	const stop = segment.stop / 100 + lag
 	const byName = new Map<string, number>()
 	for (const turn of turns) {
 		const shared = Math.min(stop, turn.end) - Math.max(start, turn.start)
 		if (shared > 0) byName.set(turn.name, (byName.get(turn.name) ?? 0) + shared)
 	}
 	return byName
+}
+
+/** Seconds `name` was shown talking during a segment outside the last `MAX_LAG` of each turn, where the ring may still show them after they stopped. */
+function sureSeconds(segment: Segment, turns: CallSpeakerTurn[], name: string): number {
+	return turns
+		.filter((turn) => turn.name === name)
+		.reduce((sum, turn) => sum + Math.max(0, Math.min(segment.stop / 100, turn.end - MAX_LAG) - Math.max(segment.start / 100, turn.start)), 0)
 }
 
 /** The name holding over half of the talk, if it also covers `minSeconds`. */
@@ -48,7 +62,9 @@ function majority(byName: Map<string, number>, minSeconds = 0): string | undefin
  * Give every sentence the participant the call app showed talking over most of it, each person
  * their own speaker — so a call tells apart more people than diarization can, and works without
  * it. A sentence the call can't place keeps its diarized speaker, named after whoever that speaker
- * matched most overall.
+ * matched most overall. The ring lags the voice, so at a handover the voice wins: a sentence the
+ * call is unsure of goes to its diarized speaker's person, when that person is there within the
+ * lag and far likelier for that voice than the call's pick.
  */
 // ponytail: O(segments × turns) scan; a sweep over both sorted lists if hour-long calls get slow.
 export function speakersFromCall(segments: Segment[], turns: CallSpeakerTurn[]): { segments: Segment[]; speakerNames: SpeakerNames } {
@@ -76,9 +92,19 @@ export function speakersFromCall(segments: Segment[], turns: CallSpeakerTurn[]):
 		}
 		return index
 	}
+	const voices = new Map([...bySpeaker].map(([speaker, byName]) => [speaker, majority(byName, spoken.get(speaker)! / 2)]))
 	const named = segments.map((segment, i) => {
-		const minSeconds = ((segment.stop - segment.start) / 100) * MIN_COVERAGE
-		const name = majority(overlaps[i], minSeconds) ?? (segment.speaker != null ? majority(bySpeaker.get(segment.speaker)!, spoken.get(segment.speaker)! / 2) : undefined)
+		const seconds = (segment.stop - segment.start) / 100
+		const fromCall = majority(overlaps[i], seconds * MIN_COVERAGE)
+		const voice = segment.speaker != null ? voices.get(segment.speaker) : undefined
+		const voiceWins =
+			fromCall != null &&
+			voice != null &&
+			voice !== fromCall &&
+			sureSeconds(segment, turns, fromCall) < seconds * SURE &&
+			overlapByName(segment, turns, MAX_LAG).has(voice) &&
+			bySpeaker.get(segment.speaker!)!.get(voice)! >= VOICE_ODDS * (bySpeaker.get(segment.speaker!)!.get(fromCall) ?? 0)
+		const name = voiceWins ? voice : (fromCall ?? voice)
 		if (name) return { ...segment, speaker: indexOf(`name:${name}`, name) }
 		if (segment.speaker != null) return { ...segment, speaker: indexOf(`speaker:${segment.speaker}`) }
 		return segment
