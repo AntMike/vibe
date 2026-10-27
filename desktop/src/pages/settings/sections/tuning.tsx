@@ -77,6 +77,20 @@ export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; on
 			<HintsGroup vm={vm} />
 			<SettingsGroup title={m.extraPasses()}>
 				<SettingsNote>{m.extraPassesInfo()}</SettingsNote>
+				<SettingsRow label={m.mainPasses()} description={m.mainPassesInfo()}>
+					<Select value={String(vm.preference.mainPasses)} onValueChange={(value) => vm.preference.setMainPasses(Number(value))}>
+						<SelectTrigger className={`w-24 ${rowControlClass}`}>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{[0, 1, 2, 3, 4].map((count) => (
+								<SelectItem key={count} value={String(count)}>
+									{count}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</SettingsRow>
 				<div className="flex flex-wrap gap-2 px-4 pb-3">
 					{vm.models
 						.filter((model) => model.path !== vm.preference.modelPath)

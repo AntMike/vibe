@@ -579,10 +579,11 @@ export function useTranscribeQueue(): TranscribeQueue {
 					const seconds = Math.round((performance.now() - startedAt) / 1000)
 					// More runs to merge with: the draft, plus one per extra model. Their lines are not the job's.
 					let runs: Segment[][] = hints?.draft.length ? [hints.draft] : []
-					if (options.extraPasses.length > 0) {
+					let mainCopies = 0
+					if (options.extraPasses.length > 0 || options.mainPasses > 0) {
 						draftingRef.current = true
 						try {
-							runs = await extraPasses(
+							;({ runs, mainPasses: mainCopies } = await extraPasses(
 								next.path,
 								options.extraPasses,
 								{ model: hints?.draft.length ? options.hints.draftModelPath : null, segments: hints?.draft ?? [] },
@@ -601,13 +602,15 @@ export function useTranscribeQueue(): TranscribeQueue {
 									lang: options.modelOptions.lang,
 									languages,
 								},
-							)
+								options.mainPasses,
+							))
 						} finally {
 							draftingRef.current = false
 						}
 						if (abortCurrentRef.current || abortAllRef.current) throw new Error('cancelled')
 					}
-					let heard = mergeRuns(result.segments, runs)
+					// The main pass votes once more for each of its own speed passes, last so the first run stays another's.
+					let heard = mergeRuns(result.segments, [...runs, ...Array(mainCopies).fill(result.segments)])
 					// The known terms come from the hints' vocabulary: without hints there are none to fix by.
 					const families = hints?.families ?? []
 					heard = fixSpelling(heard, families)

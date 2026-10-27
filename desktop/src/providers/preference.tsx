@@ -116,6 +116,9 @@ export interface Preference {
 	/** Model paths each file is transcribed again with, merged into the main pass. */
 	extraPasses: string[]
 	setExtraPasses: ModifyState<string[]>
+	/** Extra passes of the main model at other speeds, 0-4. */
+	mainPasses: number
+	setMainPasses: ModifyState<number>
 	/** Language codes auto-detection may choose between; empty is any. */
 	spokenLanguages: string[]
 	setSpokenLanguages: ModifyState<string[]>
@@ -231,6 +234,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	// Fields added later fall back to their defaults instead of reading as undefined.
 	const hints = useMemo(() => ({ ...DEFAULT_HINTS, ...storedHints }), [storedHints])
 	const [extraPasses, setExtraPasses] = usePersisted<string[]>(CONFIG_KEYS.extraPasses, [])
+	const [mainPasses, setMainPasses] = usePersisted<number>(CONFIG_KEYS.mainPasses, 0)
 	const [spokenLanguages, setSpokenLanguages] = usePersisted<string[]>(CONFIG_KEYS.spokenLanguages, [])
 	const [languageMode, setLanguageMode] = usePersisted<LanguageMode>(CONFIG_KEYS.languageMode, 'list')
 	const [speakerLanguages, setSpeakerLanguages] = usePersisted<Record<string, string>>(CONFIG_KEYS.speakerLanguages, {})
@@ -435,6 +439,8 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setHints,
 		extraPasses,
 		setExtraPasses,
+		mainPasses,
+		setMainPasses,
 		spokenLanguages,
 		setSpokenLanguages,
 		languageMode,

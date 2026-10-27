@@ -62,4 +62,13 @@ describe('mergeRuns', () => {
 		expect(mergeRuns(main, [a])).toEqual([line(500, 2500, 'Hello there.'), line(3000, 4000, 'Bye now.')])
 		expect(mergeRuns(main, [a, b])).toEqual([line(500, 2500, 'Hello there.'), line(3000, 4000, 'Bye for now.')])
 	})
+
+	it('counts the main pass in the vote, so its copies hold a word against two runs but not three', () => {
+		const main = [line(0, 1000, 'fat cat')]
+		const flat = [line(0, 1000, 'flat cat')]
+		// The main pass votes too: with two copies that is 3 of 5 for the main word, and a tie goes to the main anyway.
+		expect(mergeRuns(main, [flat, flat, main, main])).toEqual(main)
+		// 3 of 5 replace it.
+		expect(mergeRuns(main, [flat, flat, flat, main])).toEqual([line(0, 1000, 'flat cat')])
+	})
 })
