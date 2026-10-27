@@ -64,6 +64,10 @@ pub struct TranscribeOptions {
     /// Bring each window to this RMS in dBFS before decoding, so quiet and loud
     /// speakers reach the model alike; None leaves the audio as it is.
     pub turn_loudness: Option<f32>,
+    /// Decode a time-stretched copy of the audio (the copy's sample `k` is the
+    /// original's `k * speed`); the vibe-server engine maps times back. Honoured
+    /// only within 0.8..=1.2 and not 1.0.
+    pub speed: f32,
 }
 
 /// A slice of the input transcribed on its own, such as one speaker turn.
@@ -106,6 +110,7 @@ impl Default for TranscribeOptions {
             group_turns: false,
             context_tokens: 0,
             turn_loudness: None,
+            speed: 1.0,
         }
     }
 }

@@ -77,7 +77,41 @@ impl Engine {
         Ok(Self::Whisper(whisper_rs::Context::new(path, options)?))
     }
 
-    pub fn transcribe(&mut self, samples: &[f32], options: TranscribeOptions) -> anyhow::Result<TranscribeResult> {
+    /// Decodes a stretched copy when `options.speed` asks for one; times come back on the original timeline.
+    pub fn transcribe(&mut self, samples: &[f32], mut options: TranscribeOptions) -> anyhow::Result<TranscribeResult> {
+        let Some(stretch) = stretch(&options) else {
+            return self.decode(samples, options);
+        };
+        let copy = stretch.apply(samples);
+        stretch_windows(&mut options.windows, &stretch, copy.len());
+        let mut result = self.decode(&copy, options)?;
+        result.segments.iter_mut().for_each(|segment| restore(segment, &stretch));
+        Ok(result)
+    }
+
+    pub fn transcribe_stream(
+        &mut self,
+        samples: &[f32],
+        mut options: TranscribeOptions,
+        mut callbacks: StreamCallbacks<'_>,
+    ) -> anyhow::Result<TranscribeResult> {
+        let Some(stretch) = stretch(&options) else {
+            return self.decode_stream(samples, options, callbacks);
+        };
+        let copy = stretch.apply(samples);
+        stretch_windows(&mut options.windows, &stretch, copy.len());
+        if let Some(mut on_segment) = callbacks.on_segment.take() {
+            callbacks.on_segment = Some(Box::new(move |mut segment| {
+                restore(&mut segment, &stretch);
+                on_segment(segment);
+            }));
+        }
+        let mut result = self.decode_stream(&copy, options, callbacks)?;
+        result.segments.iter_mut().for_each(|segment| restore(segment, &stretch));
+        Ok(result)
+    }
+
+    fn decode(&mut self, samples: &[f32], options: TranscribeOptions) -> anyhow::Result<TranscribeResult> {
         match self {
             Self::Whisper(context) => context.transcribe(samples, options).map_err(Into::into),
             Self::Nemotron { model, vad } => {
@@ -121,11 +155,11 @@ impl Engine {
                         .collect(),
                 })
             }
-            Self::Parakeet { .. } | Self::Canary { .. } => self.transcribe_stream(samples, options, StreamCallbacks::default()),
+            Self::Parakeet { .. } | Self::Canary { .. } => self.decode_stream(samples, options, StreamCallbacks::default()),
         }
     }
 
-    pub fn transcribe_stream(
+    fn decode_stream(
         &mut self,
         samples: &[f32],
         options: TranscribeOptions,
@@ -427,6 +461,25 @@ pub fn whisper_capabilities() -> EngineCapabilities {
     }
 }
 
+/// The stretch `options.speed` asks for; speeds outside 0.8..=1.2, and 1.0, are ignored.
+fn stretch(options: &TranscribeOptions) -> Option<draft_vote::Perturbation> {
+    let speed = options.speed;
+    ((0.8..=1.2).contains(&speed) && speed != 1.0).then(|| draft_vote::Perturbation::speed(speed as f64))
+}
+
+/// Windows are sample positions of the original; the copy's are `1 / speed` of them.
+fn stretch_windows(windows: &mut [Window], stretch: &draft_vote::Perturbation, len: usize) {
+    for window in windows {
+        window.start_sample = stretch.in_copy(window.start_sample).min(len);
+        window.end_sample = stretch.in_copy(window.end_sample).min(len);
+    }
+}
+
+fn restore(segment: &mut Segment, stretch: &draft_vote::Perturbation) {
+    segment.start = stretch.restore(segment.start);
+    segment.end = stretch.restore(segment.end);
+}
+
 fn nemotron_segment(transcription: &nemotron_rs::Transcription) -> Option<Segment> {
     (!transcription.text.is_empty()).then(|| Segment {
         start: transcription.tokens.first().map_or(0, |token| token.frame as i64 * 8),
@@ -486,4 +539,43 @@ fn parakeet_segment(transcription: &parakeet_rs::Transcription) -> Option<Segmen
         language: None,
         speaker: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segment() -> Segment {
+        Segment {
+            start: 100,
+            end: 200,
+            text: "hi".into(),
+            no_speech_prob: 0.0,
+            language: None,
+            speaker: None,
+        }
+    }
+
+    #[test]
+    fn stretched_copy_times_map_back_to_the_original_timeline() {
+        let options = TranscribeOptions { speed: 0.95, ..TranscribeOptions::default() };
+        let stretch = stretch(&options).unwrap();
+        let mut one = segment();
+        restore(&mut one, &stretch);
+        assert_eq!((one.start, one.end), (95, 190));
+        let mut windows = [Window { start_sample: 19_000, end_sample: 38_000, group: 0 }];
+        stretch_windows(&mut windows, &stretch, 1_000_000);
+        assert_eq!((windows[0].start_sample, windows[0].end_sample), (20_000, 40_000));
+        // The copy of 1 s at 0.95 is about 1.053 s long, and its end maps back to the 1 s.
+        let copy = stretch.apply(&[0.0; 16_000]);
+        assert_eq!(copy.len(), 16_842);
+        assert!(stretch.original(copy.len()).abs_diff(16_000) <= 1);
+    }
+
+    #[test]
+    fn speed_one_or_out_of_range_changes_nothing() {
+        for speed in [1.0, 0.5, 1.5, f32::NAN] {
+            assert!(stretch(&TranscribeOptions { speed, ..TranscribeOptions::default() }).is_none());
+        }
+    }
 }

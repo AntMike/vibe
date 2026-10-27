@@ -162,6 +162,7 @@ pub(super) fn build_options(
         group_turns: values.bool("group_turns"),
         context_tokens: values.i32("context_tokens"),
         turn_loudness: values.opt_f32("turn_loudness"),
+        speed: values.opt_f32("speed").unwrap_or(1.0),
     }
 }
 

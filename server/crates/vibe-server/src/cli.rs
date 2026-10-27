@@ -75,6 +75,9 @@ enum Command {
         /// Whisper with a VAD: bring each window to this RMS in dBFS (e.g. -20) before decoding.
         #[arg(long, value_name = "DBFS", allow_negative_numbers = true)]
         turn_loudness: Option<f32>,
+        /// Decode a time-stretched copy of the audio (0.8 to 1.2; e.g. 0.95 is slower); times stay on the original.
+        #[arg(long, default_value_t = 1.0)]
+        speed: f32,
     },
     Serve {
         model: Option<String>,
@@ -148,6 +151,7 @@ pub async fn run() -> anyhow::Result<()> {
             group_turns,
             context_tokens,
             turn_loudness,
+            speed,
         } => {
             transcribe_command(
                 TranscribeArgs {
@@ -173,6 +177,7 @@ pub async fn run() -> anyhow::Result<()> {
                     group_turns,
                     context_tokens,
                     turn_loudness,
+                    speed,
                 },
                 config,
             )
@@ -241,6 +246,7 @@ async fn transcribe_command(args: TranscribeArgs, config: AppConfig) -> anyhow::
                 group_turns: args.group_turns,
                 context_tokens: args.context_tokens,
                 turn_loudness: args.turn_loudness,
+                speed: args.speed,
                 ..TranscribeOptions::default()
             },
         )
@@ -320,4 +326,5 @@ struct TranscribeArgs {
     group_turns: bool,
     context_tokens: i32,
     turn_loudness: Option<f32>,
+    speed: f32,
 }

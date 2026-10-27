@@ -24,6 +24,14 @@ export interface HintsRun {
 	languages?: string[]
 }
 
+// Measured 13.3% vs 13.8% WER on the Oct 27 grid; within noise, kept by choice.
+export const TURN_LOUDNESS_DBFS = -20
+
+/** The speed pass `p` decodes at (0 is the main pass): half at normal speed, a quarter each slower and faster. */
+export function passSpeed(p: number): number {
+	return [1.0, 0.95, 1.05, 1.0][p % 4]
+}
+
 /** Participants, most talkative first. */
 export function callNames(turns: CallSpeakerTurn[] | undefined): string[] {
 	const seconds = new Map<string, number>()
@@ -35,18 +43,20 @@ export function callNames(turns: CallSpeakerTurn[] | undefined): string[] {
  * One fast pass with the draft model, decoded `runs` times over altered audio, leaning toward the
  * `hotwords` it already knows. Leaves the draft model loaded.
  */
-async function draftSegments(path: string, draftModel: string, swap: boolean, run: HintsRun, runs = 1, hotwords: string[] = []): Promise<Segment[]> {
+async function draftSegments(path: string, draftModel: string, swap: boolean, run: HintsRun, runs = 1, hotwords: string[] = [], speed = 1): Promise<Segment[]> {
 	if (swap) await run.loadModel(draftModel)
 	const metadata = await invoke<ModelMetadata>('get_model_metadata', { modelPath: draftModel })
 	const vad = metadata.capabilities.requires_vad ? { vad_model: `${await invoke<string>('get_models_folder')}/${config.vadModelFilename}` } : {}
 	const draft = await invoke<Transcript>('transcribe', {
 		options: {
 			path,
+			turn_loudness: TURN_LOUDNESS_DBFS,
 			...vad,
 			...(run.lang ? { lang: run.lang } : {}),
 			...(run.languages?.length ? { languages: run.languages } : {}),
 			...(runs > 1 ? { draft_runs: runs } : {}),
 			...(hotwords.length > 0 ? { hotwords } : {}),
+			...(speed !== 1 ? { speed } : {}),
 		},
 	})
 	return draft.segments.filter((segment) => segment.text.trim())
@@ -61,8 +71,9 @@ export interface Hints {
 
 /**
  * One more transcription of the file per model, to merge with the main pass. The draft pass counts
- * when its model is listed, so a model never runs twice. A failed pass only warns. Leaves the main
- * model loaded.
+ * when its model is listed, so a model never runs twice. Pass `p` (1 for the first listed) decodes at
+ * `passSpeed(p)`, so the main model may run again unless that is its normal speed. A failed pass only
+ * warns. Leaves the main model loaded.
  */
 export async function extraPasses(
 	path: string,
@@ -71,17 +82,19 @@ export async function extraPasses(
 	run: Pick<HintsRun, 'mainModelPath' | 'loadModel' | 'isAborted' | 'onWarning' | 'lang' | 'languages'>,
 ): Promise<Segment[][]> {
 	const runs: Segment[][] = draft.segments.length > 0 ? [draft.segments] : []
-	let swapped = false
-	for (const model of new Set(models)) {
-		if (model === run.mainModelPath || model === draft.model || run.isAborted()) continue
+	let loaded = run.mainModelPath
+	for (const [index, model] of [...new Set(models)].entries()) {
+		const speed = passSpeed(index + 1)
+		if ((model === run.mainModelPath && speed === 1) || model === draft.model || run.isAborted()) continue
 		try {
-			runs.push(await draftSegments(path, model, true, run as HintsRun))
-			swapped = true
+			const swap = model !== loaded
+			loaded = model
+			runs.push(await draftSegments(path, model, swap, run as HintsRun, 1, [], speed))
 		} catch (error) {
 			if (!run.isAborted()) run.onWarning(message(error))
 		}
 	}
-	if (swapped) await run.loadModel(run.mainModelPath)
+	if (loaded !== run.mainModelPath) await run.loadModel(run.mainModelPath)
 	return runs
 }
 

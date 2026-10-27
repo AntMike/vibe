@@ -21,7 +21,7 @@ import { mergeRuns } from '~/lib/vote'
 import { canConfuse, decodeSpeaker, languageDoubts, speakersToRedo, withSpeakerLines, type LanguageCheck } from '~/lib/speaker-language'
 import { correctTerms, postEditLines } from '~/lib/hints'
 import { applyReplacements, fixSpelling, guardedEdits, type Replacement } from '~/lib/spelling'
-import { callNames, extraPasses, hintOptions, spokenLanguages, type Hints } from './transcribe-hints'
+import { callNames, extraPasses, hintOptions, spokenLanguages, TURN_LOUDNESS_DBFS, type Hints } from './transcribe-hints'
 import { vocabularyPath } from '~/lib/vocabulary'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import {
@@ -195,6 +195,7 @@ async function buildSharedOptions(preference: Preference): Promise<Record<string
 	// Parakeet or stable timestamps), so silence never becomes an invented line.
 	const useVad = preference.stableTimestampsEnabled || requiresVad || (await fsExt.exists(vadModel).catch(() => false))
 	return {
+		turn_loudness: TURN_LOUDNESS_DBFS,
 		...(preference.diarizeEnabled ? { diarize_model: `${modelsFolder}/${config.diarizeModelFilename}` } : {}),
 		...(useVad ? { vad_model: vadModel } : {}),
 		...(preference.stableTimestampsEnabled ? { stable_timestamps: true } : {}),

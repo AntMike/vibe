@@ -39,6 +39,21 @@ impl Perturbation {
         }
     }
 
+    /// A copy played at `speed` with no shift.
+    pub fn speed(speed: f64) -> Self {
+        Self { shift: 0, speed }
+    }
+
+    /// Where a sample of the original sits in the copy; the inverse of `original` without a shift.
+    pub fn in_copy(&self, position: usize) -> usize {
+        (position as f64 / self.speed).round() as usize
+    }
+
+    /// A time of the perturbed copy, in centiseconds, on the original timeline.
+    pub fn restore(&self, time: i64) -> i64 {
+        (time as f64 * self.speed).round() as i64
+    }
+
     pub fn apply<'a>(&self, samples: &'a [f32]) -> Cow<'a, [f32]> {
         if self.shift == 0 && self.speed == 1.0 {
             return Cow::Borrowed(samples);
