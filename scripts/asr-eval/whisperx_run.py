@@ -1,6 +1,13 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["whisperx"]
+# dependencies = ["whisperx", "torch", "torchaudio"]
+# [tool.uv.sources]
+# torch = { index = "pytorch-cu126" }
+# torchaudio = { index = "pytorch-cu126" }
+# [[tool.uv.index]]
+# name = "pytorch-cu126"
+# url = "https://download.pytorch.org/whl/cu126"
+# explicit = true
 # ///
 """Transcribe every .wav in a folder with whisperx large-v3 (language auto-detected), one .txt per wav.
 

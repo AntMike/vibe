@@ -52,7 +52,9 @@ def main() -> None:
     args = ap.parse_args()
 
     out = args.out_dir or args.pieces.parent / "out"
-    exe = shutil.which(AI[args.ai][0]) or sys.exit(f"{args.ai} CLI not found on PATH")
+    # npm CLIs (codex) also leave an extensionless shell shim that Windows cannot start; take the .cmd.
+    name = AI[args.ai][0]
+    exe = shutil.which(f"{name}.cmd") or shutil.which(name) or sys.exit(f"{args.ai} CLI not found on PATH")
     families = known_families(args.vocabulary) if args.vocabulary.exists() else []
     terms = "\n".join(f"- {f[0]}" + (f" ({', '.join(f[1:])})" if len(f) > 1 else "") for f in families) or "(none)"
 
