@@ -37,11 +37,41 @@ export function callNames(turns: CallSpeakerTurn[] | undefined): string[] {
 	return [...seconds].sort((a, b) => b[1] - a[1]).map(([name]) => name)
 }
 
+/** Stretches of a file, as `[start, end]` seconds, to decode in one language. */
+interface LanguageStretches {
+	lang: string
+	windows: [number, number][]
+}
+
+/** Neighbouring lines closer than this many seconds are decoded as one window. */
+const JOIN_SECONDS = 1
+
+/** The stretches the main pass heard in `lang`, close neighbours joined; empty when it heard none. */
+function languageWindows(segments: Segment[], lang: string): [number, number][] {
+	const windows: [number, number][] = []
+	for (const segment of segments.filter((segment) => segment.language === lang).sort((a, b) => a.start - b.start)) {
+		const [start, end] = [segment.start / 100, segment.stop / 100]
+		const last = windows[windows.length - 1]
+		if (last && start - last[1] < JOIN_SECONDS) last[1] = Math.max(last[1], end)
+		else windows.push([start, end])
+	}
+	return windows
+}
+
 /**
  * One fast pass with the draft model, decoded `runs` times over altered audio, leaning toward the
  * `hotwords` it already knows. Leaves the draft model loaded.
  */
-async function draftSegments(path: string, draftModel: string, swap: boolean, run: HintsRun, runs = 1, hotwords: string[] = [], speed = 1): Promise<Segment[]> {
+async function draftSegments(
+	path: string,
+	draftModel: string,
+	swap: boolean,
+	run: HintsRun,
+	runs = 1,
+	hotwords: string[] = [],
+	speed = 1,
+	only?: LanguageStretches,
+): Promise<Segment[]> {
 	if (swap) await run.loadModel(draftModel)
 	const metadata = await invoke<ModelMetadata>('get_model_metadata', { modelPath: draftModel })
 	const vad = metadata.capabilities.requires_vad ? { vad_model: `${await invoke<string>('get_models_folder')}/${config.vadModelFilename}` } : {}
@@ -50,8 +80,9 @@ async function draftSegments(path: string, draftModel: string, swap: boolean, ru
 			path,
 			turn_loudness: TURN_LOUDNESS_DBFS,
 			...vad,
-			...(run.lang ? { lang: run.lang } : {}),
-			...(run.languages?.length ? { languages: run.languages } : {}),
+			...(only ? { lang: only.lang, windows: only.windows } : {}),
+			...(!only && run.lang ? { lang: run.lang } : {}),
+			...(!only && run.languages?.length ? { languages: run.languages } : {}),
 			...(runs > 1 ? { draft_runs: runs } : {}),
 			...(hotwords.length > 0 ? { hotwords } : {}),
 			...(speed !== 1 ? { speed } : {}),
@@ -71,8 +102,10 @@ export interface Hints {
  * One more transcription of the file per listed model other than the main one, at normal speed, to
  * merge with the main pass. The draft pass counts when its model is listed, so a model never runs
  * twice. Then `mainPasses` more passes of the main model, each at its own `MAIN_PASS_SPEEDS`, which
- * are the second return value as far as they succeeded. A failed pass only warns. Leaves the main
- * model loaded.
+ * are the second return value as far as they succeeded. Last, per `languages.models` entry (language
+ * code to model path), one pass decoding only the `languages.segments` lines heard in that language,
+ * forced to it; it adds nothing where the main pass heard another language, so the vote skips it there.
+ * A failed pass only warns. Leaves the main model loaded.
  */
 export async function extraPasses(
 	path: string,
@@ -80,21 +113,26 @@ export async function extraPasses(
 	draft: { model: string | null; segments: Segment[] },
 	run: Pick<HintsRun, 'mainModelPath' | 'loadModel' | 'isAborted' | 'onWarning' | 'lang' | 'languages'>,
 	mainPasses = 0,
+	languages: { segments: Segment[]; models: Record<string, string> } = { segments: [], models: {} },
 ): Promise<{ runs: Segment[][]; mainPasses: number }> {
 	const runs: Segment[][] = draft.segments.length > 0 ? [draft.segments] : []
 	let loaded = run.mainModelPath
 	let succeeded = 0
-	const passes = [
+	const passes: { model: string; speed: number; only?: LanguageStretches }[] = [
 		...[...new Set(models)].filter((model) => model !== run.mainModelPath && model !== draft.model).map((model) => ({ model, speed: 1 })),
 		...MAIN_PASS_SPEEDS.slice(0, mainPasses).map((speed) => ({ model: run.mainModelPath, speed })),
 	]
-	for (const { model, speed } of passes) {
+	for (const [lang, model] of Object.entries(languages.models)) {
+		const windows = languageWindows(languages.segments, lang)
+		if (model && windows.length > 0) passes.push({ model, speed: 1, only: { lang, windows } })
+	}
+	for (const { model, speed, only } of passes) {
 		if (run.isAborted()) break
 		try {
 			const swap = model !== loaded
 			loaded = model
-			runs.push(await draftSegments(path, model, swap, run as HintsRun, 1, [], speed))
-			if (model === run.mainModelPath) succeeded += 1
+			runs.push(await draftSegments(path, model, swap, run as HintsRun, 1, [], speed, only))
+			if (model === run.mainModelPath && !only) succeeded += 1
 		} catch (error) {
 			if (!run.isAborted()) run.onWarning(message(error))
 		}

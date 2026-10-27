@@ -580,7 +580,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 					// More runs to merge with: the draft, plus one per extra model. Their lines are not the job's.
 					let runs: Segment[][] = hints?.draft.length ? [hints.draft] : []
 					let mainCopies = 0
-					if (options.extraPasses.length > 0 || options.mainPasses > 0) {
+					if (options.extraPasses.length > 0 || options.mainPasses > 0 || Object.values(options.languagePasses).some(Boolean)) {
 						draftingRef.current = true
 						try {
 							;({ runs, mainPasses: mainCopies } = await extraPasses(
@@ -603,6 +603,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 									languages,
 								},
 								options.mainPasses,
+								{ segments: result.segments, models: options.languagePasses },
 							))
 						} finally {
 							draftingRef.current = false

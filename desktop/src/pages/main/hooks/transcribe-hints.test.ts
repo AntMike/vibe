@@ -72,4 +72,49 @@ describe('extraPasses', () => {
 		await extraPasses('a.wav', [other], { model: other, segments: [] }, run)
 		expect(decoded).toEqual([])
 	})
+
+	describe('language passes', () => {
+		const lines = [
+			{ start: 100, stop: 200, text: 'a', language: 'ru' },
+			{ start: 250, stop: 400, text: 'b', language: 'ru' },
+			{ start: 450, stop: 600, text: 'c', language: 'uk' },
+			{ start: 1000, stop: 1100, text: 'd', language: 'ru' },
+		]
+
+		it('decodes only the lines in the language, joined when close, forced to it', async () => {
+			const { runs, mainPasses } = await extraPasses('a.wav', [], { model: null, segments: [] }, run, 0, { segments: lines, models: { ru: other } })
+			expect(decoded).toEqual([
+				{
+					path: 'a.wav',
+					turn_loudness: TURN_LOUDNESS_DBFS,
+					lang: 'ru',
+					windows: [
+						[1, 4],
+						[10, 11],
+					],
+				},
+			])
+			expect(runs).toHaveLength(1)
+			expect(mainPasses).toBe(0)
+			expect(loaded).toEqual([other, main])
+		})
+
+		it('makes no request when the main pass heard none in the language', async () => {
+			await extraPasses('a.wav', [], { model: null, segments: [] }, run, 0, { segments: lines, models: { en: other, ru: '' } })
+			expect(decoded).toEqual([])
+			expect(loaded).toEqual([])
+		})
+
+		it('only warns when it fails, and still loads the main model back', async () => {
+			run.onWarning.mockClear()
+			invoke.mockImplementation(async (command: string) => {
+				if (command === 'get_model_metadata') return { capabilities: { requires_vad: false } }
+				throw new Error('boom')
+			})
+			const { runs } = await extraPasses('a.wav', [], { model: null, segments: [] }, run, 0, { segments: lines, models: { ru: other } })
+			expect(runs).toEqual([])
+			expect(run.onWarning).toHaveBeenCalledOnce()
+			expect(loaded).toEqual([other, main])
+		})
+	})
 })

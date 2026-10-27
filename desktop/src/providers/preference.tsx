@@ -119,6 +119,9 @@ export interface Preference {
 	/** Extra passes of the main model at other speeds, 0-4. */
 	mainPasses: number
 	setMainPasses: ModifyState<number>
+	/** Language code to the model path that redoes the main pass's lines in that language. */
+	languagePasses: Record<string, string>
+	setLanguagePasses: ModifyState<Record<string, string>>
 	/** Language codes auto-detection may choose between; empty is any. */
 	spokenLanguages: string[]
 	setSpokenLanguages: ModifyState<string[]>
@@ -235,6 +238,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const hints = useMemo(() => ({ ...DEFAULT_HINTS, ...storedHints }), [storedHints])
 	const [extraPasses, setExtraPasses] = usePersisted<string[]>(CONFIG_KEYS.extraPasses, [])
 	const [mainPasses, setMainPasses] = usePersisted<number>(CONFIG_KEYS.mainPasses, 0)
+	const [languagePasses, setLanguagePasses] = usePersisted<Record<string, string>>(CONFIG_KEYS.languagePasses, {})
 	const [spokenLanguages, setSpokenLanguages] = usePersisted<string[]>(CONFIG_KEYS.spokenLanguages, [])
 	const [languageMode, setLanguageMode] = usePersisted<LanguageMode>(CONFIG_KEYS.languageMode, 'list')
 	const [speakerLanguages, setSpeakerLanguages] = usePersisted<Record<string, string>>(CONFIG_KEYS.speakerLanguages, {})
@@ -441,6 +445,8 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setExtraPasses,
 		mainPasses,
 		setMainPasses,
+		languagePasses,
+		setLanguagePasses,
 		spokenLanguages,
 		setSpokenLanguages,
 		languageMode,

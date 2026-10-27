@@ -44,6 +44,8 @@ export const CONFIG_KEYS = {
 	extraPasses: 'transcription.extraPasses',
 	/** How many extra passes of the main model run at other speeds, 0-4; see `lib/vote`. */
 	mainPasses: 'transcription.mainPasses',
+	/** Language code to the model path that decodes only the main pass's lines in that language, as one more vote. */
+	languagePasses: 'transcription.languagePasses',
 	/** Languages auto-detection may pick from, e.g. ["uk","en"]; empty = all. Sent as `languages`. */
 	spokenLanguages: 'transcription.spokenLanguages',
 	/** `list`, `detect` or `detect-list`: whether a quick pass first finds the recording's languages; see `lib/languages`. */
