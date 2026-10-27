@@ -13,7 +13,7 @@ export const MAX_REPLACEMENTS = 80
 const WORD = /\p{L}[\p{L}'’]*/gu
 
 /** Edits between `a` and `b`: letters inserted, deleted or swapped for another. */
-function distance(a: string, b: string): number {
+export function distance(a: string, b: string): number {
 	let row = Array.from({ length: b.length + 1 }, (_, j) => j)
 	for (let i = 1; i <= a.length; i++) {
 		const next = [i]
@@ -64,4 +64,17 @@ export function applyReplacements(segments: Segment[], pairs: Replacement[]): Se
 	const words = [...spelling.keys()].sort((a, b) => b.length - a.length).map((from) => from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 	const pattern = new RegExp(`(?<![\\p{L}\\p{N}])(?:${words.join('|')})(?![\\p{L}\\p{N}])`, 'giu')
 	return mapText(segments, (text) => text.replace(pattern, (word) => spelling.get(word.toLowerCase()) ?? word))
+}
+
+/** The AI's whole-line edits by 1-based line number; a line that changed too much keeps its original. */
+export function guardedEdits(segments: Segment[], edits: Map<number, string>): Segment[] {
+	return segments.map((segment, i) => {
+		const edit = edits.get(i + 1)?.trim()
+		const old = segment.text.trim()
+		if (!edit || edit === old) return segment
+		// The AI saw trimmed lines; Whisper's leading space stays.
+		const text = segment.text.slice(0, segment.text.length - segment.text.trimStart().length) + edit
+		// ponytail: 30% cap guards against rewrites; raise it if real fixes get dropped.
+		return distance(old, edit) / Math.max(old.length, 1) <= 0.3 ? { ...segment, text } : segment
+	})
 }

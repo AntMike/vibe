@@ -19,8 +19,8 @@ import type { SlackCall } from '~/lib/slack'
 import { carrySpeakerNames, speakersFromCall, typedSpeakerNames, type CallSpeakerTurn } from '~/lib/call-speakers'
 import { mergeRuns } from '~/lib/vote'
 import { canConfuse, decodeSpeaker, languageDoubts, speakersToRedo, withSpeakerLines, type LanguageCheck } from '~/lib/speaker-language'
-import { correctTerms } from '~/lib/hints'
-import { applyReplacements, fixSpelling, type Replacement } from '~/lib/spelling'
+import { correctTerms, postEditLines } from '~/lib/hints'
+import { applyReplacements, fixSpelling, guardedEdits, type Replacement } from '~/lib/spelling'
 import { callNames, extraPasses, hintOptions, spokenLanguages, type Hints } from './transcribe-hints'
 import { vocabularyPath } from '~/lib/vocabulary'
 import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
@@ -610,12 +610,13 @@ export function useTranscribeQueue(): TranscribeQueue {
 					// The known terms come from the hints' vocabulary: without hints there are none to fix by.
 					const families = hints?.families ?? []
 					heard = fixSpelling(heard, families)
-					if (options.hints.enabled && options.hints.correct && options.hints.refiner !== 'words') {
+					if (options.hints.enabled && (options.hints.correct || options.hints.postEdit) && options.hints.refiner !== 'words') {
 						try {
 							const names = options.hints.callNames ? callNames(next.callSpeakers) : []
 							const known = families.map((family) => family.join(' / '))
 							const lines = heard.map((segment) => segment.text.trim())
-							heard = applyReplacements(heard, await correctTerms(lines, names, known, options.hints, options.ai.connection))
+							if (options.hints.postEdit) heard = guardedEdits(heard, await postEditLines(lines, names, known, options.ai.connection))
+							else heard = applyReplacements(heard, await correctTerms(lines, names, known, options.hints, options.ai.connection))
 						} catch (error) {
 							toast.warning(m.hintsFailed({ message: errorParts(error).message }), { position: 'bottom-center', duration: 8000 })
 						}

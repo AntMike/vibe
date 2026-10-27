@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { cliCommand, DEFAULT_AI } from './ai'
-import { DEFAULT_HINTS, parseGlossary, parseReplacements, rareWords, refineDraft, splitFixes, withoutFixes } from './hints'
+import { DEFAULT_HINTS, parseGlossary, parsePostEdits, parseReplacements, rareWords, refineDraft, splitFixes, withoutFixes } from './hints'
 
 const LEAN = '--tools "" --strict-mcp-config --setting-sources "" --no-session-persistence'
 
@@ -116,5 +116,32 @@ describe('cliCommand', () => {
 		expect(cliCommand({ ...connection, model: 'haiku' })).toBe(`claude -p --model haiku ${LEAN}`)
 		expect(cliCommand({ ...connection, model: 'haiku && rm -rf ~' })).toBe(`claude -p ${LEAN}`)
 		expect(cliCommand({ ...connection, cli: 'custom', cliCommand: ' my-ai --stdin ' })).toBe('my-ai --stdin')
+	})
+})
+
+describe('parsePostEdits', () => {
+	it('reads the changed lines by number, fenced or not', () => {
+		expect(parsePostEdits('```json\n[{"n": 2, "text": " Клікап готовий. "}, {"n": 5, "text": "ok"}]\n```')).toEqual(
+			new Map([
+				[2, 'Клікап готовий.'],
+				[5, 'ok'],
+			]),
+		)
+	})
+
+	it('drops entries that are not a number with a text', () => {
+		expect(parsePostEdits('[{"n": "1", "text": "a"}, {"n": 2}, {"n": 3, "text": " "}, null]').size).toBe(0)
+	})
+
+	it('gives no edits for a garbage reply', () => {
+		expect(parsePostEdits('Sure! Here are the fixes: line 2 was wrong.').size).toBe(0)
+		expect(parsePostEdits('{"n": 1, "text": "a"}').size).toBe(0)
+	})
+})
+
+describe('DEFAULT_HINTS', () => {
+	it('corrects terms by default and leaves the sentence edit off', () => {
+		expect(DEFAULT_HINTS.correct).toBe(true)
+		expect(DEFAULT_HINTS.postEdit).toBe(false)
 	})
 })

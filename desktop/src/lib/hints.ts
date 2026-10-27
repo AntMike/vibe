@@ -27,6 +27,8 @@ export interface HintsSettings {
 	tuneEvery: number
 	/** After transcribing, let the AI respell misheard names and terms; see `CORRECT_PROMPT`. */
 	correct: boolean
+	/** Instead of the term pass, let the AI fix whole sentences; see `POST_EDIT_PROMPT`. */
+	postEdit: boolean
 }
 
 export const DEFAULT_HINTS: HintsSettings = {
@@ -37,7 +39,8 @@ export const DEFAULT_HINTS: HintsSettings = {
 	draftRuns: 1,
 	learn: false,
 	tuneEvery: 0,
-	correct: false,
+	correct: true,
+	postEdit: false,
 }
 
 const MAX_TERMS = 40
@@ -78,6 +81,20 @@ Answer with JSON only: [{"from": "...", "to": "..."}, ...]
 - Keep the speaker's script and the word's inflected ending: стімейти → естімейти; плікап → ClickUp or Клікап, whichever way the known term is spelled. Never translate.
 - Only words you are sure of; leave everything else untouched. A wrong fix does more harm than a missed one.
 - At most ${MAX_REPLACEMENTS} pairs; [] when nothing needs fixing.
+
+"""
+{transcript}
+"""`
+
+export const POST_EDIT_PROMPT = `Output only the requested content. No introductions, explanations, or commentary.
+
+Below is an automatic transcript of a recording, one numbered line per sentence; it has recognition mistakes. Fix only the clear ones: misheard words, names and terms, wrong script. Known participants: {speakers}. Terms known from earlier recordings, a term written several ways as A / B: {known}.
+
+Never rephrase, translate, reorder, merge or split lines. Keep the speaker's language, slang and grammar as spoken. A wrong fix does more harm than a missed one.
+
+Answer with JSON only: [{"n": 1, "text": "..."}, ...]
+- n: the line's number; text: that whole line, corrected.
+- List only the lines you changed; [] when nothing needs fixing.
 
 """
 {transcript}
@@ -143,6 +160,21 @@ export function parseReplacements(reply: string): Replacement[] {
 		.filter((pair): pair is Replacement => typeof pair?.from === 'string' && typeof pair?.to === 'string')
 		.map(({ from, to }) => ({ from: from.trim(), to: to.trim() }))
 		.filter(({ from, to }) => from && to)
+}
+
+/** The changed lines out of an AI reply by line number; a reply that is not a list of them gives none. */
+export function parsePostEdits(reply: string): Map<number, string> {
+	const edits = new Map<number, string>()
+	let value: unknown
+	try {
+		value = JSON.parse(reply.replace(/```\w*/g, '').trim())
+	} catch {
+		return edits
+	}
+	if (!Array.isArray(value)) return edits
+	for (const item of value)
+		if (typeof item?.n === 'number' && typeof item?.text === 'string' && item.text.trim()) edits.set(item.n, item.text.trim())
+	return edits
 }
 
 const FIXES_FENCE = '```fixes'
@@ -240,4 +272,24 @@ export async function correctTerms(
 	for (const transcript of chunkLines(lines, template, contextTokens))
 		pairs.push(...parseReplacements(await client.ask(fillPrompt(template, { transcript, speakers: names.join(', ') || 'unknown' }))))
 	return pairs
+}
+
+/** Whole-sentence fixes by 1-based line number; see `POST_EDIT_PROMPT`. Guard them with `guardedEdits`. */
+export async function postEditLines(
+	lines: string[],
+	names: string[],
+	families: string[],
+	connection: AiConnection,
+): Promise<Map<number, string>> {
+	// The summary's model, not the refiner's: the eval's gain came from Sonnet, a small model rewrites more.
+	const contextTokens = connection.platform === 'cli' ? CLI_CONTEXT_TOKENS : connection.contextTokens
+	const template = POST_EDIT_PROMPT.replace('{known}', () => families.join(', ') || 'none')
+	const client = createClient(connection, { unloadAfter: true })
+	const edits = new Map<number, string>()
+	// Numbered before chunking, so a line keeps its number in whichever piece it lands.
+	const numbered = lines.map((line, i) => `${i + 1}. ${line}`)
+	for (const transcript of chunkLines(numbered, template, contextTokens))
+		for (const [n, text] of parsePostEdits(await client.ask(fillPrompt(template, { transcript, speakers: names.join(', ') || 'unknown' }))))
+			edits.set(n, text)
+	return edits
 }

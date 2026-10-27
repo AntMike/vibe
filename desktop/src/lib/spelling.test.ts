@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/plugin-fs', () => ({}))
 vi.mock('@tauri-apps/api/path', () => ({}))
 
-import { applyReplacements, fixSpelling } from './spelling'
+import { applyReplacements, fixSpelling, guardedEdits } from './spelling'
 
 const line = (text: string) => ({ start: 0, stop: 1, text })
 const texts = (segments: { text: string }[]) => segments.map((segment) => segment.text)
@@ -61,5 +61,21 @@ describe('applyReplacements', () => {
 	it('takes at most 80 pairs', () => {
 		const pairs = Array.from({ length: 81 }, (_, i) => ({ from: `w${i}`, to: `x${i}` }))
 		expect(texts(applyReplacements([line('w0 w80')], pairs))).toEqual(['x0 w80'])
+	})
+})
+
+describe('guardedEdits', () => {
+	const segments = [line('We use Click Up for tasks.'), line('Yes, that is fine.')]
+
+	it('applies an edit within the cap', () => {
+		expect(texts(guardedEdits(segments, new Map([[1, 'We use ClickUp for tasks.']])))).toEqual(['We use ClickUp for tasks.', 'Yes, that is fine.'])
+	})
+
+	it('keeps the original when the edit is a rewrite', () => {
+		expect(texts(guardedEdits(segments, new Map([[2, 'Absolutely, I agree with everything you said.']])))).toEqual(texts(segments))
+	})
+
+	it('ignores line numbers outside the transcript', () => {
+		expect(guardedEdits(segments, new Map([[0, 'x'], [3, 'y']]))).toEqual(segments)
 	})
 })

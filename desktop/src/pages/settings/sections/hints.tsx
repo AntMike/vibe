@@ -117,6 +117,9 @@ export function HintsGroup({ vm }: { vm: SettingsViewModel }) {
 							<SettingsRow label={m.hintsCorrect()} description={m.hintsCorrectInfo()}>
 								<Switch checked={hints.correct} onCheckedChange={(correct) => set({ correct })} />
 							</SettingsRow>
+							<SettingsRow label={m.hintsPostEdit()} description={m.hintsPostEditInfo()}>
+								<Switch checked={hints.postEdit} onCheckedChange={(postEdit) => set({ postEdit })} />
+							</SettingsRow>
 						</>
 					)}
 					<SettingsRow label={m.hintsLearn()} description={m.hintsLearnInfo()}>
