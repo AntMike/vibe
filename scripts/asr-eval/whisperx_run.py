@@ -24,6 +24,8 @@ for var in ("HF_HOME", "TORCH_HOME", "XDG_CACHE_HOME"):
     os.environ[var] = CACHE  # before torch/whisperx import
 
 import argparse
+import json
+import time
 from pathlib import Path
 
 
@@ -33,6 +35,7 @@ def main() -> None:
     ap.add_argument("out", type=Path)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--compute-type", default="float16")
+    ap.add_argument("--json", action="store_true", help="also write <piece>.json with segments (start/end in seconds, text)")
     args = ap.parse_args()
 
     import whisperx
@@ -40,11 +43,15 @@ def main() -> None:
     model = whisperx.load_model("large-v3", args.device, compute_type=args.compute_type, language=None, download_root=CACHE)
     args.out.mkdir(parents=True, exist_ok=True)
     wavs = sorted(args.folder.glob("*.wav"))
+    t0 = time.time()
     for wav in wavs:
         result = model.transcribe(whisperx.load_audio(str(wav)), batch_size=8)
         text = "\n".join(s["text"].strip() for s in result["segments"])
         (args.out / f"{wav.stem}.txt").write_text(text + "\n", encoding="utf-8")
-    print(f"whisperx: {len(wavs)} pieces -> {args.out}")
+        if args.json:
+            segs = [{"start": s["start"], "end": s["end"], "text": s["text"]} for s in result["segments"]]
+            (args.out / f"{wav.stem}.json").write_text(json.dumps({"text": text, "segments": segs}, ensure_ascii=False), encoding="utf-8")
+    print(f"whisperx: {len(wavs)} pieces -> {args.out} in {time.time() - t0:.0f}s")
 
 
 if __name__ == "__main__":
