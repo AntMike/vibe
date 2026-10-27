@@ -305,7 +305,7 @@
 	"extraPassesInfo": "Transcribe each file again with these models and merge the runs into the main one: a second run replaces the lines Whisper got stuck on, a third lets every word be voted on. Each pass costs a full transcription.",
 	"mainPasses": "Extra passes of the main model",
 	"mainPassesInfo": "At 0.95×, 1.05×, 0.97×, 1.03× speed; each takes about ⅙ of the recording’s length.",
-	"languagePassInfo": "Decode only the lines the main pass heard in a language with a model of your choice, forced to that language, as one more run in the vote. It adds nothing where another language was heard. Needs the language list above.",
+	"languagePassInfo": "Decode only the lines the main pass heard in a language with a model of your choice, forced to that language, as one more run in the vote. It adds nothing where another language was heard. Add a language, then pick its model.",
 	"languagePassModel": "Model for {language} lines",
 	"languagePassNone": "None",
 	"extraPassFailed": "An extra pass was skipped for this file: {message}",

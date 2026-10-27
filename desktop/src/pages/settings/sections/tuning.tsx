@@ -22,6 +22,9 @@ export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; on
 	const nameOf = (code: string) => languages.find((option) => option.code === code)?.label ?? code
 	const [query, setQuery] = useState('')
 	const addable = languages.filter((option) => !spoken.includes(option.code) && matchesQuery(option, query.trim().toLowerCase()))
+	const passes = vm.preference.languagePasses
+	const [passQuery, setPassQuery] = useState('')
+	const addablePass = languages.filter((option) => !(option.code in passes) && matchesQuery(option, passQuery.trim().toLowerCase()))
 	const customized =
 		Boolean(options.translate) ||
 		(Object.keys(DEFAULT_MODEL_OPTIONS) as (keyof typeof DEFAULT_MODEL_OPTIONS)[])
@@ -94,29 +97,51 @@ export function TuningSection({ vm, onOpenWhisper }: { vm: SettingsViewModel; on
 						</SelectContent>
 					</Select>
 				</SettingsRow>
-				{spoken.length > 0 && <SettingsNote>{m.languagePassInfo()}</SettingsNote>}
-				{spoken.map((code) => (
+				<SettingsNote>{m.languagePassInfo()}</SettingsNote>
+				{Object.keys(passes).map((code) => (
 					<SettingsRow key={code} label={m.languagePassModel({ language: nameOf(code) })}>
-						<Select
-							value={vm.preference.languagePasses[code] || NO_MODEL}
-							onValueChange={(value) => {
-								const { [code]: _, ...rest } = vm.preference.languagePasses
-								vm.preference.setLanguagePasses(value === NO_MODEL ? rest : { ...rest, [code]: value })
-							}}>
-							<SelectTrigger className={`w-56 ${rowControlClass}`}>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value={NO_MODEL}>{m.languagePassNone()}</SelectItem>
-								{vm.models.map((model) => (
-									<SelectItem key={model.path} value={model.path}>
-										{vm.preference.modelDisplayNames[model.path] ?? getFriendlyModelName(model.name)}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+						<div className="flex items-center gap-2">
+							<Select
+								value={passes[code] || NO_MODEL}
+								onValueChange={(value) => vm.preference.setLanguagePasses({ ...passes, [code]: value === NO_MODEL ? '' : value })}>
+								<SelectTrigger className={`w-56 ${rowControlClass}`}>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value={NO_MODEL}>{m.languagePassNone()}</SelectItem>
+									{vm.models.map((model) => (
+										<SelectItem key={model.path} value={model.path}>
+											{vm.preference.modelDisplayNames[model.path] ?? getFriendlyModelName(model.name)}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							<Button
+								type="button"
+								size="icon"
+								variant="ghost"
+								aria-label={m.removeLanguage({ language: nameOf(code) })}
+								onClick={() => {
+									const { [code]: _, ...rest } = passes
+									vm.preference.setLanguagePasses(rest)
+								}}>
+								<X />
+							</Button>
+						</div>
 					</SettingsRow>
 				))}
+				<div className="px-4 py-3">
+					<LanguageCombobox
+						value=""
+						onSelect={(code) => vm.preference.setLanguagePasses({ ...passes, [code]: '' })}
+						groups={[{ label: null, items: addablePass }]}
+						query={passQuery}
+						onQueryChange={setPassQuery}
+						triggerLabel={m.addLanguage()}
+						ariaLabel={m.addLanguage()}
+						className="w-56"
+					/>
+				</div>
 				<div className="flex flex-wrap gap-2 px-4 pb-3">
 					{vm.models
 						.filter((model) => model.path !== vm.preference.modelPath)
