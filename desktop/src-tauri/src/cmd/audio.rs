@@ -181,6 +181,31 @@ fn best_raw_capture(wav_paths: &[(PathBuf, u32)]) -> Option<PathBuf> {
         .map(|(path, _)| path.clone())
 }
 
+/// Keep each non-empty raw track as FLAC. A failed encode only drops that track.
+fn keep_tracks(
+    wav_paths: &[(PathBuf, u32)],
+    stream_is_mic: &[bool],
+    dir: &std::path::Path,
+    stem: &str,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    let (mut mic, mut call) = (None, None);
+    for ((wav, frames), is_mic) in wav_paths.iter().zip(stream_is_mic) {
+        if *frames == 0 {
+            continue;
+        }
+        let label = if *is_mic { "mic" } else { "call" };
+        let flac = crate::cmd::files::available_path(dir, &format!("{stem}.{label}"), "flac");
+        match crate::ffmpeg::to_flac(wav.clone(), flac.clone()) {
+            Ok(()) => *(if *is_mic { &mut mic } else { &mut call }) = Some(flac),
+            Err(error) => {
+                std::fs::remove_file(&flac).ok();
+                tracing::warn!("Could not keep {label} track as FLAC: {error:#}");
+            }
+        }
+    }
+    (mic, call)
+}
+
 fn remove_recording_intermediates(paths: impl IntoIterator<Item = PathBuf>, keep: &PathBuf) {
     for path in paths {
         if path != *keep && path.exists() {
@@ -402,6 +427,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
             }
         };
 
+        let (mic_track, call_track) = keep_tracks(&wav_paths, &stream_is_mic, &temp_dir, &recording_stem);
         let intermediates = wav_paths.into_iter().map(|(path, _)| path).chain(std::iter::once(dst));
         remove_recording_intermediates(intermediates, &output);
         app_handle_clone
@@ -415,6 +441,7 @@ pub async fn start_record(app_handle: AppHandle, devices: Vec<AudioDevice>, reco
                     "callApp": call_app_name,
                     "callChannel": call_channel,
                     "startedAt": started_at,
+                    "tracks": {"mic": mic_track, "call": call_track},
                 }),
             )
             .map_err(|e| eyre!("{e:?}"))

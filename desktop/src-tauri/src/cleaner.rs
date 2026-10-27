@@ -82,3 +82,68 @@ pub fn clean_updater_files() -> Result<()> {
     }
     Ok(())
 }
+
+/// Delete kept `mic.flac` / `call.flac` tracks older than `days` days from the direct
+/// subfolders of `projects_path`. Returns how many files were deleted.
+#[tauri::command]
+pub fn shrink_recordings(projects_path: String, days: u32) -> Result<u32> {
+    if days == 0 {
+        return Ok(0);
+    }
+    let Some(cutoff) = std::time::SystemTime::now().checked_sub(std::time::Duration::from_secs(u64::from(days) * 86400))
+    else {
+        return Ok(0);
+    };
+    let Ok(folders) = std::fs::read_dir(&projects_path) else {
+        return Ok(0);
+    };
+    let mut deleted = 0;
+    for folder in folders.flatten().filter(|entry| entry.path().is_dir()) {
+        for name in ["mic.flac", "call.flac"] {
+            let path = folder.path().join(name);
+            let old = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|modified| modified < cutoff);
+            if old {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => deleted += 1,
+                    Err(e) => tracing::warn!("failed to delete {}: {:?}", path.display(), e),
+                }
+            }
+        }
+    }
+    Ok(deleted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn touch(path: &std::path::Path, age_days: u64) {
+        let file = std::fs::File::create(path).unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(age_days * 86400)).unwrap();
+    }
+
+    #[test]
+    fn shrink_recordings_deletes_only_old_tracks() {
+        let root = std::env::temp_dir().join(format!("vibe_shrink_{}", crate::ffmpeg::random_string(10)));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        touch(&project.join("mic.flac"), 10);
+        touch(&project.join("call.flac"), 1);
+        touch(&project.join("audio.wav"), 10);
+        let root_str = root.to_string_lossy().to_string();
+
+        assert_eq!(shrink_recordings(root_str.clone(), 0).unwrap(), 0);
+        assert!(project.join("mic.flac").exists());
+
+        assert_eq!(shrink_recordings(root_str, 5).unwrap(), 1);
+        assert!(!project.join("mic.flac").exists());
+        assert!(project.join("call.flac").exists());
+        assert!(project.join("audio.wav").exists());
+        assert_eq!(shrink_recordings(root.join("missing").to_string_lossy().to_string(), 5).unwrap(), 0);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+}

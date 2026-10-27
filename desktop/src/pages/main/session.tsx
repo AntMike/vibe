@@ -2,11 +2,15 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { webviewWindow } from '@tauri-apps/api'
 import * as dialog from '@tauri-apps/plugin-dialog'
+import * as fs from '@tauri-apps/plugin-fs'
+import { dirname, join } from '@tauri-apps/api/path'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { m } from '~/paraglide/messages.js'
 import * as config from '~/lib/config'
+import { CONFIG_KEYS } from '~/lib/config-keys'
+import { readConfig } from '~/lib/config-store'
 import { pathToNamedPath } from '~/lib/fs'
 import { cleanupPartialDownloads, listInstalledModels, type InstalledModel } from '~/lib/model'
 import type { CallSpeakerTurn } from '~/lib/call-speakers'
@@ -78,6 +82,8 @@ interface RecordFinish {
 	startedAt?: number
 	/** The channel or DM Slack's huddle bar named during the call. */
 	callChannel?: string | null
+	/** The separate mic and call FLAC tracks kept beside the mix, when the recording made them. */
+	tracks?: { mic?: string | null; call?: string | null }
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -233,6 +239,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 				return
 			}
 
+			// Beside the media, so the project owns them; they must never block the transcription.
+			for (const [side, from] of Object.entries(payload.tracks ?? {})) {
+				if (!from) continue
+				try {
+					await fs.rename(from, await join(await dirname(saved.mediaPath), `${side}.flac`))
+				} catch (error) {
+					console.error(`failed to move the ${side} track into the project:`, error)
+				}
+			}
+
 			const record: TranscriptRecord = {
 				version: TRANSCRIPT_VERSION,
 				name,
@@ -355,6 +371,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		void checkModelExists()
 		void showWindow()
 	}, [])
+
+	// Shrink old kept tracks at start and daily; the setting is read each time so a change applies.
+	const { projectsPath } = preference
+	useEffect(() => {
+		async function shrink() {
+			const days = readConfig(CONFIG_KEYS.keepTracksDays, 7)
+			if (days <= 0) return
+			try {
+				await invoke<number>('shrink_recordings', { projectsPath, days })
+			} catch (error) {
+				console.error('failed to shrink old recording tracks:', error)
+			}
+		}
+		void shrink()
+		const timer = window.setInterval(shrink, 24 * 60 * 60 * 1000)
+		return () => window.clearInterval(timer)
+	}, [projectsPath])
 
 	// Results persist the moment they exist, so closing only warns when something would
 	// actually be lost: a run in flight, or finished results that never reached disk

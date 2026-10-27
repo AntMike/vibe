@@ -170,6 +170,7 @@ function runTranscribe(
 
 export const serverHandlers: CommandHandlerMap = {
 	get_models_folder: () => MODELS_FOLDER,
+	shrink_recordings: () => 0,
 
 	// ({ modelPath }) - every mock model reports the same whisper capabilities.
 	get_model_metadata: () => ({

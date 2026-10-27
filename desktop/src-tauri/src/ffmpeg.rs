@@ -145,3 +145,34 @@ pub fn merge_wav_files(a: PathBuf, b: PathBuf, dst: PathBuf) -> Result<()> {
     }
     Ok(())
 }
+
+/// Lossless FLAC copy of `src`, keeping its own sample rate and channels.
+pub fn to_flac(src: PathBuf, dst: PathBuf) -> Result<()> {
+    let ffmpeg_path = find_ffmpeg_path().context("ffmpeg not found")?;
+
+    let mut cmd = Command::new(ffmpeg_path);
+    cmd.args([
+        "-i",
+        src.to_str().context("tostr")?,
+        "-c:a",
+        "flac",
+        dst.to_str().context("tostr")?,
+        "-hide_banner",
+        "-y",
+        "-loglevel",
+        "error",
+    ])
+    .stdin(Stdio::null());
+
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let mut pid = cmd.spawn()?;
+    if !pid.wait()?.success() {
+        bail!("unable to encode flac");
+    }
+    if !dst.exists() {
+        bail!("seems like ffmpeg failed for some reason. output not exists");
+    }
+    Ok(())
+}

@@ -59,6 +59,8 @@ export const CONFIG_KEYS = {
 	/** Sources recorded without asking, e.g. `["slack", "zoom"]`. */
 	autoRecordMeetings: 'recording.autoRecordMeetings',
 	autoTranscribeAfterRecording: 'recording.autoTranscribeAfterRecording',
+	/** Days the mic and call tracks kept beside a recording live before they are shrunk; 0 keeps them. */
+	keepTracksDays: 'recording.keepTracksDays',
 
 	// Notifications — the meeting ones are read by notifications.rs too.
 	/** `popup` (Vibe's window) or `system` (a Windows notification). */

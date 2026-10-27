@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import ShortcutRecorder from '~/components/shortcut-recorder'
 import { GoogleMeetIcon, MeetingServiceIcons, MicrosoftTeamsIcon, SlackIcon, ZoomIcon } from '~/components/meeting-service-icons'
 import { Button } from '~/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { Switch } from '~/components/ui/switch'
 import { getDefaultRecordingShortcut } from '~/lib/config'
 import { CONFIG_KEYS } from '~/lib/config-keys'
@@ -13,7 +14,7 @@ import type { PermissionStatus } from '~/lib/permissions'
 import { m } from '~/paraglide/messages.js'
 import { useRecordingShortcut } from '~/providers/recording-shortcut'
 import { usePreferenceProvider } from '~/providers/preference'
-import { SettingsGroup, SettingsNote, SettingsRow } from './shared'
+import { rowControlClass, SettingsGroup, SettingsNote, SettingsRow } from './shared'
 
 type PermissionKind = 'microphone' | 'system_audio'
 
@@ -160,6 +161,7 @@ export function RecordingSection() {
 	const shortcut = useRecordingShortcut()
 	const { meetingDetectionEnabled, setMeetingDetectionEnabled, autoTranscribeAfterRecording, setAutoTranscribeAfterRecording } = usePreferenceProvider()
 	const isMacOS = platform() === 'macos'
+	const [keepTracksDays, setKeepTracksDays] = usePersisted<number>(CONFIG_KEYS.keepTracksDays, 7)
 	const [autoRecord, setAutoRecord] = usePersisted<string[]>(CONFIG_KEYS.autoRecordMeetings, [])
 	const toggleAutoRecord = (source: string, on: boolean) => setAutoRecord([...autoRecord.filter((item) => item !== source), ...(on ? [source] : [])])
 
@@ -200,6 +202,21 @@ export function RecordingSection() {
 						onCheckedChange={setAutoTranscribeAfterRecording}
 						aria-label={m.autoTranscribeAfterRecording()}
 					/>
+				</SettingsRow>
+				<SettingsRow label={m.keepTracksDays()} description={m.keepTracksDaysInfo()}>
+					<Select value={String(keepTracksDays)} onValueChange={(days) => setKeepTracksDays(Number(days))}>
+						<SelectTrigger className={`w-40 ${rowControlClass}`}>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{[7, 14, 30].map((days) => (
+								<SelectItem key={days} value={String(days)}>
+									{m.keepTracksDaysOption({ days })}
+								</SelectItem>
+							))}
+							<SelectItem value="0">{m.keepTracksNever()}</SelectItem>
+						</SelectContent>
+					</Select>
 				</SettingsRow>
 				<SettingsRow label={m.recordingShortcutEnabled()} description={m.recordingShortcutEnabledInfo()}>
 					<Switch checked={shortcut.recordingShortcutEnabled} onCheckedChange={shortcut.setRecordingShortcutEnabled} />
