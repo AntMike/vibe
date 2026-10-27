@@ -7,19 +7,23 @@ use crate::Window;
 /// Whisper's own limit on prompt tokens (half its 448-token text context).
 const MAX_CONTEXT_TOKENS: usize = 224;
 
-/// Windows by start, with each run of one group's windows (nobody else starting
-/// in between) joined into one spanning first start to last end.
-pub(crate) fn merge_turns(windows: &[Window]) -> Vec<Window> {
-    let mut sorted = windows.to_vec();
-    sorted.sort_by_key(|window| window.start_sample);
-    let mut out: Vec<Window> = Vec::new();
-    for window in sorted {
+/// Windows by start, with each run of one group's windows in one language
+/// (nobody else starting in between) joined into one spanning first start to
+/// last end. `languages[i]` is window `i`'s detected language; the merged
+/// windows come back with theirs.
+pub(crate) fn merge_turns(windows: &[Window], languages: &[Option<String>]) -> (Vec<Window>, Vec<Option<String>>) {
+    let mut sorted: Vec<(Window, Option<String>)> = windows.iter().cloned().zip(languages.iter().cloned()).collect();
+    sorted.sort_by_key(|(window, _)| window.start_sample);
+    let mut out: Vec<(Window, Option<String>)> = Vec::new();
+    for (window, language) in sorted {
         match out.last_mut() {
-            Some(last) if last.group == window.group => last.end_sample = last.end_sample.max(window.end_sample),
-            _ => out.push(window),
+            Some((last, last_language)) if last.group == window.group && *last_language == language => {
+                last.end_sample = last.end_sample.max(window.end_sample)
+            }
+            _ => out.push((window, language)),
         }
     }
-    out
+    out.into_iter().unzip()
 }
 
 /// Text one window decoded to, kept to prompt the windows after it.
@@ -112,10 +116,19 @@ mod tests {
     #[test]
     fn merge_joins_a_speakers_run_until_someone_else_starts() {
         let windows = [window(30, 40, 0), window(0, 10, 0), window(12, 20, 0), window(45, 50, 1), window(55, 60, 0)];
-        assert_eq!(
-            merge_turns(&windows),
-            vec![window(0, 40, 0), window(45, 50, 1), window(55, 60, 0)]
-        );
+        let uk = Some("uk".to_string());
+        let (merged, languages) = merge_turns(&windows, &vec![uk.clone(); 5]);
+        assert_eq!(merged, vec![window(0, 40, 0), window(45, 50, 1), window(55, 60, 0)]);
+        assert_eq!(languages, vec![uk.clone(), uk.clone(), uk]);
+    }
+
+    #[test]
+    fn merge_keeps_a_speakers_windows_apart_when_the_language_differs() {
+        let windows = [window(20, 30, 0), window(0, 10, 0), window(40, 50, 0)];
+        let languages = [Some("ru".to_string()), Some("uk".to_string()), Some("uk".to_string())];
+        let (merged, merged_languages) = merge_turns(&windows, &languages);
+        assert_eq!(merged, vec![window(0, 10, 0), window(20, 30, 0), window(40, 50, 0)]);
+        assert_eq!(merged_languages, vec![Some("uk".into()), Some("ru".into()), Some("uk".into())]);
     }
 
     #[test]

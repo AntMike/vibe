@@ -330,11 +330,12 @@ fn transcribe_windows(
         })
         .filter(|window| window.end_sample > window.start_sample)
         .collect();
-    let windows = if options.group_turns { turns::merge_turns(&windows) } else { windows };
     let mut params = full_params(&options);
     let mut decoded_turns: Vec<turns::Decoded> = Vec::new();
-    let n_windows = windows.len().max(1);
     let languages = window_languages(whisper, samples, &windows, &params, false, &mut callbacks)?;
+    // Merge only after detection, and only windows that share speaker and language.
+    let (windows, languages) = if options.group_turns { turns::merge_turns(&windows, &languages) } else { (windows, languages) };
+    let n_windows = windows.len().max(1);
 
     let progress_start = if auto_language(&params) { DETECT_PROGRESS } else { 0 };
     let mut result = TranscribeResult::default();
