@@ -50,6 +50,20 @@ pub struct TranscribeOptions {
     /// it is too short or unsure, instead of resolved against its speaker and
     /// the recording. Shows who the detector hears in which language.
     pub raw_languages: bool,
+    /// Decoder fallback thresholds; None keeps whisper's own (entropy 2.4,
+    /// log-prob -1.0, no-speech 0.6). Server callers only, for tuning.
+    pub entropy_thold: Option<f32>,
+    pub logprob_thold: Option<f32>,
+    pub no_speech_thold: Option<f32>,
+    /// Decode a speaker's back-to-back windows as one, so a turn cut by pauses
+    /// keeps its own context. Eval knob, off by default.
+    pub group_turns: bool,
+    /// Prompt each window with up to this many tokens (capped at 224) of text
+    /// already decoded from the same speaker or language; 0 is off.
+    pub context_tokens: i32,
+    /// Bring each window to this RMS in dBFS before decoding, so quiet and loud
+    /// speakers reach the model alike; None leaves the audio as it is.
+    pub turn_loudness: Option<f32>,
 }
 
 /// A slice of the input transcribed on its own, such as one speaker turn.
@@ -86,6 +100,12 @@ impl Default for TranscribeOptions {
             draft_runs: 1,
             hotwords: Vec::new(),
             raw_languages: false,
+            entropy_thold: None,
+            logprob_thold: None,
+            no_speech_thold: None,
+            group_turns: false,
+            context_tokens: 0,
+            turn_loudness: None,
         }
     }
 }

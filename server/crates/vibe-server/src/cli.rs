@@ -65,6 +65,16 @@ enum Command {
         /// Comma-separated candidates for language auto-detection.
         #[arg(long, value_delimiter = ',')]
         languages: Vec<String>,
+        /// Whisper with a VAD: decode a speaker's back-to-back windows as one.
+        #[arg(long)]
+        group_turns: bool,
+        /// Whisper with a VAD: prompt each window with up to N tokens (max 224) of earlier text
+        /// from the same speaker or language; 0 is off.
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        context_tokens: i32,
+        /// Whisper with a VAD: bring each window to this RMS in dBFS (e.g. -20) before decoding.
+        #[arg(long, value_name = "DBFS", allow_negative_numbers = true)]
+        turn_loudness: Option<f32>,
     },
     Serve {
         model: Option<String>,
@@ -135,6 +145,9 @@ pub async fn run() -> anyhow::Result<()> {
             draft_runs,
             hotwords,
             languages,
+            group_turns,
+            context_tokens,
+            turn_loudness,
         } => {
             transcribe_command(
                 TranscribeArgs {
@@ -157,6 +170,9 @@ pub async fn run() -> anyhow::Result<()> {
                     draft_runs,
                     hotwords,
                     languages,
+                    group_turns,
+                    context_tokens,
+                    turn_loudness,
                 },
                 config,
             )
@@ -222,6 +238,9 @@ async fn transcribe_command(args: TranscribeArgs, config: AppConfig) -> anyhow::
                 draft_runs: args.draft_runs,
                 hotwords: args.hotwords,
                 languages: args.languages,
+                group_turns: args.group_turns,
+                context_tokens: args.context_tokens,
+                turn_loudness: args.turn_loudness,
                 ..TranscribeOptions::default()
             },
         )
@@ -298,4 +317,7 @@ struct TranscribeArgs {
     draft_runs: i32,
     hotwords: Vec<String>,
     languages: Vec<String>,
+    group_turns: bool,
+    context_tokens: i32,
+    turn_loudness: Option<f32>,
 }

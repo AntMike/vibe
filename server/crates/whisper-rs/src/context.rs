@@ -12,6 +12,7 @@ use std::sync::Once;
 use ggml_rs_sys as ffi;
 
 use crate::languages::{auto_language, window_languages, DETECT_PROGRESS};
+use crate::turns;
 use crate::{
     model_file, ContextOptions, Error, FullCallbacks, FullParams, FullSegment, Result, SamplingStrategy, Segment,
     StreamCallbacks, TranscribeOptions, TranscribeResult, Whisper, Window, SAMPLE_RATE,
@@ -329,7 +330,9 @@ fn transcribe_windows(
         })
         .filter(|window| window.end_sample > window.start_sample)
         .collect();
+    let windows = if options.group_turns { turns::merge_turns(&windows) } else { windows };
     let mut params = full_params(&options);
+    let mut decoded_turns: Vec<turns::Decoded> = Vec::new();
     let n_windows = windows.len().max(1);
     let languages = window_languages(whisper, samples, &windows, &params, false, &mut callbacks)?;
 
@@ -340,17 +343,34 @@ fn transcribe_windows(
             return Err(Error::Aborted);
         }
         params.language = language.clone();
+        if options.context_tokens > 0 {
+            let vocab = &whisper.model.vocab;
+            params.initial_prompt = turns::context_prompt(
+                &decoded_turns,
+                window,
+                &language,
+                options.prompt.as_deref(),
+                options.context_tokens,
+                |text| vocab.tokenize(text).len(),
+            );
+        }
+        let window_samples = &samples[window.start_sample..window.end_sample];
+        let levelled = options.turn_loudness.map(|dbfs| turns::levelled(window_samples, dbfs));
         let decoded = {
             let mut engine_callbacks = FullCallbacks::default();
             if let Some(should_abort) = callbacks.should_abort.as_mut() {
                 engine_callbacks.should_abort = Some(Box::new(&mut **should_abort));
             }
-            whisper.full_stream(
-                &params,
-                &samples[window.start_sample..window.end_sample],
-                &mut engine_callbacks,
-            )?
+            whisper.full_stream(&params, levelled.as_deref().unwrap_or(window_samples), &mut engine_callbacks)?
         };
+        if options.context_tokens > 0 {
+            decoded_turns.push(turns::Decoded {
+                start_sample: window.start_sample,
+                group: window.group,
+                language: language.clone(),
+                text: decoded.iter().filter(|segment| !is_hallucination(segment)).map(|segment| segment.text.as_str()).collect(),
+            });
+        }
 
         let t0cs = (window.start_sample / (SAMPLE_RATE / 100)) as i64;
         for segment in decoded.iter().filter(|segment| !is_hallucination(segment)) {
@@ -403,6 +423,9 @@ fn full_params(options: &TranscribeOptions) -> FullParams {
     if options.max_segment_len > 0 {
         params.max_len = options.max_segment_len;
     }
+    params.entropy_thold = options.entropy_thold.unwrap_or(params.entropy_thold);
+    params.logprob_thold = options.logprob_thold.unwrap_or(params.logprob_thold);
+    params.no_speech_thold = options.no_speech_thold.unwrap_or(params.no_speech_thold);
     if options.temperature > 0.0 {
         params.temperature = options.temperature;
     }

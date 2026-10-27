@@ -42,6 +42,8 @@ mod state;
 #[cfg(feature = "ffi")]
 mod timestamps;
 #[cfg(feature = "ffi")]
+mod turns;
+#[cfg(feature = "ffi")]
 mod vocab;
 
 #[cfg(not(feature = "ffi"))]

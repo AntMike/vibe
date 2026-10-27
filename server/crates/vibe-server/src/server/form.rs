@@ -24,6 +24,11 @@ impl<'a> FormValues<'a> {
         self.values.get(name).and_then(|value| value.parse().ok()).unwrap_or(0.0)
     }
 
+    /// None when the field is missing or not a number, so the engine keeps its own value.
+    pub fn opt_f32(&self, name: &str) -> Option<f32> {
+        self.values.get(name).and_then(|value| value.parse().ok())
+    }
+
     pub fn string(&self, name: &str) -> Option<String> {
         self.values.get(name).filter(|value| !value.is_empty()).cloned()
     }

@@ -156,6 +156,12 @@ pub(super) fn build_options(
         draft_runs: values.i32("draft_runs"),
         hotwords: comma_list(values.string("hotwords")),
         raw_languages: values.bool("raw_languages"),
+        entropy_thold: values.opt_f32("entropy_thold"),
+        logprob_thold: values.opt_f32("logprob_thold"),
+        no_speech_thold: values.opt_f32("no_speech_thold"),
+        group_turns: values.bool("group_turns"),
+        context_tokens: values.i32("context_tokens"),
+        turn_loudness: values.opt_f32("turn_loudness"),
     }
 }
 
